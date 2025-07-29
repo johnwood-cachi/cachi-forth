@@ -23,8 +23,11 @@
   <button onclick="mutateProgram()">Mutate</button>
   <button onclick="clearSavedPrograms()">Clear</button>
 <button id="autoBtn" onclick="toggleAuto()">Start</button>
+  <div style='margin-bottom: 10px;'>
 &nbsp;Generation: <span id="mutCount">0</span>
 &nbsp;|&nbsp;Pressure:&nbsp;<span id="pressureVal">0</span>
+  &nbsp;|&nbsp;Len: &nbsp;<span id="progLen">0</span>
+&nbsp;|&nbsp;CC:&nbsp;<span id="ccVal">0</span></div>
   <div id="output"></div>
   <svg id="graph"></svg>
 <div id="labelsArea">
@@ -123,6 +126,26 @@ function generateRandomProgram() {
 	toks.push("out", "end");
 	document.getElementById("program").value = defs.join("\n") + "\n" + toks.join(" ");
 	runProgram();
+}
+
+  function getMetrics (tokenArr) {
+  let cc = 1;                       // baseline path
+  for (const t of tokenArr) {
+    const [base] = splitTok(t);
+    if (base === "loop" || base === "ifg" || base === "ifl") cc += 1;
+    else if (base.startsWith("branch") && base.length === 7) {
+      const n = +base[6];
+      if (n >= 2 && n <= 5) cc += n - 1;  // branch2 ⇒ +1, branch3 ⇒ +2 …
+    }
+  }
+  return { len: tokenArr.length, cc };
+}
+
+function updateMetricsView (len, cc) {
+  const lEl = document.getElementById("progLen");
+  const cEl = document.getElementById("ccVal");
+  if (lEl) lEl.textContent = len;
+  if (cEl) cEl.textContent = cc;
 }
 
 function updateMutCount () {
@@ -454,7 +477,9 @@ frameRef.idx = start;
 		}
 	}
 	document.getElementById("output").innerHTML = "Output: " + outHTML.join(" ");
-	drawGraph(vals, cols, tips);
+	const { len, cc } = getMetrics(tokens);
+  updateMetricsView(len, cc);
+  drawGraph(vals, cols, tips);
     updateLabelsView();  
 	return out.join(" ");
 }
@@ -481,6 +506,8 @@ function clearSavedPrograms() {
 	updateMutCount();
 	LABELS = { };
 	savedPrograms.length = 0;
+    const { len, cc } = getMetrics(code.split(/\s+/));
+    updateMetricsView(len, cc);
 	document.getElementById("savedList").innerHTML = "";
 }
 
@@ -523,13 +550,15 @@ function mutateProgram() {
               //document.getElementById("savedList").prepend(entry);
               document.getElementById("program").value = code;
               runProgram();
-		pressureVal = attempts - 1;          // latest raw value
-		
+		pressureVal = attempts - 1;          // latest raw value  
+		  
 		pressureHist.push(pressureVal);      // store in the rolling window
 		if (pressureHist.length > PRESS_WINDOW)
 		    pressureHist.shift();            // drop oldest
 		
-		updatePressure();
+      		updatePressure();
+            const { len, cc } = getMetrics(code.split(/\s+/));
+            updateMetricsView(len, cc);              
 			return;
             }
     		if (performance.now() - start > 1000) {
