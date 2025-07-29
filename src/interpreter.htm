@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Cachi‑Forth Interpreter</title>
+  <style>
+    body{font-family:monospace;background:#111;color:#eee;padding:20px}
+    textarea{width:100%;height:200px;background:#222;color:#0f0;border:1px solid #555;padding:10px;font-size:14px}
+    button{margin:10px 10px 10px 0;padding:10px}
+    #output{background:#222;padding:10px;border:1px solid #555;white-space:pre-wrap;color:#0ff}
+    #graph{background:#000;border:1px solid #555;width:100%;height:120px;display:block;margin-top:6px}
+    #history{margin-top:20px;padding:10px;background:#111;border-top:1px solid #555}
+    .saved-entry{background:#222;margin-bottom:10px;padding:10px;border:1px solid #444;white-space:pre-wrap}
+  </style>
+</head>
+<body>
+  <h1>Cachi‑Forth Interpreter</h1>
+
+  <textarea id="program" placeholder="Enter your Cachi‑Forth code..."></textarea><br>
+  <button onclick="runProgram()">Run</button>
+  <button onclick="generateRandomProgram()">Random</button>
+  <button onclick="saveProgram()">Save</button>
+  <button onclick="mutateProgram()">Mutate</button>
+  <button onclick="clearSavedPrograms()">Clear</button>
+<button id="autoBtn" onclick="toggleAuto()">Start</button>
+<span id="mutCount">0</span>
+  <div id="output"></div>
+  <svg id="graph"></svg>
+<div id="labelsArea">
+  <h2>Labels</h2>
+  <div id="labelsList" style="white-space:pre-wrap"></div>
+</div>
+  <div id="history">
+    <h2>Saved Programs</h2>
+    <div id="savedList"></div>
+  </div>
+
+<script>
+/******************** CONSTANTS & HELPERS *********************/
+const MAX_INST = 1000;
+const CLAMP = v => ((v % 128) + 128) % 128;
+let LABELS = {};   // label-string  -> tokenIndex (-1 = missing)
+
+let autoTimer   = null;   // holds setInterval handle
+let mutCount    = 0;      // shown in UI
+const STEP_MS   = 200;    // mutation cadence (adjust to taste)
+
+const splitTok = t => {
+	if (t==null) return [ "", "" ];
+  const idx = t.indexOf(':');
+  return idx === -1 ? [t, null] : [t.slice(0, idx), t.slice(idx + 1)];
+};
+
+function hashCode(str) {
+	let h = 0;
+	for (let i = 0; i < str.length; i++) {
+		h = ((h << 5) - h) + str.charCodeAt(i);
+		h |= 0;
+	}
+	return h;
+}
+
+function levenshtein(a, b) {
+	const m = a.length,
+		n = b.length,
+		dp = Array.from({
+			length: m + 1
+		}, () => Array(n + 1));
+	for (let i = 0; i <= m; i++) dp[i][0] = i;
+	for (let j = 0; j <= n; j++) dp[0][j] = j;
+	for (let i = 1; i <= m; i++)
+		for (let j = 1; j <= n; j++) dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+	return dp[m][n];
+}
+
+/******************** TOKEN POOLS *********************/
+const instrPool = ["+", "-", "*", "/", "dup", "swap", "drop", "out"];
+const ctrlPool = ["loop", "ifg", "ifl", "branch2", "branch3", "branch4", "branch5"];
+const funcNames = ["func1", "func2", "func3", "func4", "func5"];
+
+/******************** RANDOM TOKEN / PROGRAM *********************/
+function randToken(valid = funcNames){
+  const r = Math.random();
+  // 50% chance: literal number
+  if(r < 0.5) return (Math.floor(Math.random()*256) - 127).toString();
+  // 25% chance: common ops with heavier weight on `out`
+  if(r < 0.75){
+    const fav = ["dup","swap","drop","out","out","out"];
+    return fav[Math.floor(Math.random()*fav.length)];
+  }
+  // 25% chance: control / function tokens
+  const branchTokens = ["branch2","branch3","branch4"]; // restrict to branch2‑4
+  const controlTokens = ["loop","ifg","ifl",...branchTokens];
+  // Limit function space to first 3 names to keep total distinct functions small
+  const limitedFuncs = valid.slice(0,3);
+  const pool = [
+    ...instrPool,                 // + - * /
+    ...controlTokens,             // loop / ifg / ifl / branch2‑4
+    ...limitedFuncs.map(f => "@"+f),  // function calls (max 3)
+    ...limitedFuncs.map(f => ">"+f),  // declarations (max 3)
+    "end"                         // explicit end token
+  ];
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+function generateRandomProgram() {
+	mutCount = 0;
+	updateMutCount();
+	if (autoTimer) toggleAuto();   // ensure auto-evolve halts on Clear
+
+	const tot = 50,
+		numFuncs = Math.floor(Math.random() * 4) + 1,
+		active = funcNames.slice(0, numFuncs);
+	const defs = [];
+	for (const name of active) {
+		defs.push(`>${name} ${randToken(active)} ${randToken(active)} ${randToken(active)} end`);
+	}
+	const toks = [];
+	while (toks.length < tot - defs.join(" ").split(/\s+/).length - 2) toks.push(randToken(active));
+	toks.push("out", "end");
+	document.getElementById("program").value = defs.join("\n") + "\n" + toks.join(" ");
+	runProgram();
+}
+
+function updateMutCount () {
+  const el = document.getElementById("mutCount");
+  if (el) el.textContent = mutCount;
+}
+
+function toggleAuto () {
+  const btn = document.getElementById("autoBtn");
+  if (!btn) return;
+
+  if (autoTimer) {                 // ----- STOP -----
+    clearInterval(autoTimer);
+    autoTimer = null;
+    btn.textContent = "Start";
+    return;
+  }
+
+  // ----- START -----
+  btn.textContent = "Stop";
+  autoTimer = setInterval(() => {
+    const lost = Object.values(LABELS).some(v => v === -1);
+    if (lost) {                    // stop if any label vanished
+      toggleAuto();
+      return;
+    }
+    mutateProgram();               // perform one mutation
+    mutCount++;
+    updateMutCount();
+  }, STEP_MS);
+}
+
+function updateLabelsView () {
+  const list = document.getElementById("labelsList");
+  if (!list) return;
+
+  const html = Object.keys(LABELS)
+    .sort()                                    // alphabetical for stability
+    .map(k => {
+      const v = LABELS[k];
+      const col = v === -1 ? "#f44" : "#eee";  // red if missing
+      return `<span style="color:${col}">${k}:${v}</span>`;
+    })
+    .join("  ");                               // two nbsp’s for spacing
+
+  list.innerHTML = html;
+}
+/******************** GRAPH RENDER *********************/
+function drawGraph(vals, cols, titles) {
+	const svg = document.getElementById("graph");
+	if (!svg) return;
+	if (!vals.length) {
+		svg.innerHTML = "";
+		return;
+	}
+	const W = svg.clientWidth || 600,
+		H = svg.clientHeight || 120,
+		mid = H / 2,
+		step = vals.length > 1 ? W / (vals.length) : W,
+		scale = (H / 2) / 128;
+	let g = `<rect x='0' y='${mid}' width='${W}' height='1' fill='#555'/>`;
+	for (let i = 0; i < vals.length; i++) {
+		const v = isFinite(vals[i]) ? vals[i] : 0;
+		const h = Math.abs(v) * scale;
+		const x = i * step;
+		const y = v >= 0 ? mid - h : mid;
+		g += `<rect x='${x}' width='${Math.max(1,step-1)}' y='${y}' height='${h}' fill='${cols[i]}' title='${titles[i]}'></rect>`;
+	}
+	svg.innerHTML = g;
+}
+
+  function collectSeed(frame) {
+    const first = frame.tokens[frame.idx++];
+    if (!["ifg","ifl","loop"].includes(first)) return [first];   // simple token
+  
+    const block=[], label=first; let depth=1;
+    while (frame.idx < frame.tokens.length && depth) {
+      const t=frame.tokens[frame.idx++];
+	const [b] = splitTok(t);
+	if (b === label) depth++;
+      else if (t==="end") depth--;
+      block.push(t);
+      if (!depth) break;
+    }
+  return [first, ...block];        // full control block
+}
+
+/******************** INTERPRETER *********************/
+function runWithOutput(src, debug = false) {
+	const tokens = src.trim().split(/\s+/);
+	// refresh LABELS: default everything to –1
+	for (const k in LABELS) LABELS[k] = -1;
+	tokens.forEach((t, i) => {
+	  const [, lab] = splitTok(t);
+	  if (lab) LABELS[lab] = i;          // absolute offset in original token list
+	});
+
+	const functions = {};
+	const main = parseDefs(tokens, functions);
+	const threads = [{
+		pc: 0,
+    tokens: main,
+    stack: [],
+    callStack: [],
+		blockStack: [],
+		fn: ""
+	}];
+	const out = [],
+		outHTML = [],
+		vals = [],
+		cols = [],
+		tips = [];
+	const palette = ["#ff0", "#f0f", "#0ff", "#f80", "#0f0", "#08f", "#f44", "#fff", "#ccc", "#faa"];
+
+	function parseDefs(tok, table) {
+		const body = [];
+		for (let i = 0; i < tok.length;) {
+			const tk = tok[i++];
+			if (tk && tk.startsWith(">")) {
+				const raw = tk.slice(1); // strip '>'
+				const [name, lab] = splitTok(raw);
+				const blk = [];
+				let d = 1;
+				while (i < tok.length && d) {
+					const t = tok[i++];
+					if (t === `>${name}`) d++;
+					else if (t === "end") d--;
+					if (d) blk.push(t);
+				}
+				table[name] = { body: blk, label: lab };
+			} else body.push(tk);
+		}
+		return body;
+	}
+
+	let inst = 0;
+	while (threads.length && inst < MAX_INST) {
+		for (let tid = 0; tid < threads.length && inst < MAX_INST; tid++) {
+			const th = threads[tid],
+				S = th.stack,
+				pop = () => S.pop() ?? 0;
+			let tok;
+			// fetch token
+			while (true) {
+				if (th.blockStack.length) {
+					const blk = th.blockStack[th.blockStack.length - 1];
+					if (blk.idx < blk.tokens.length) {
+						tok = blk.tokens[blk.idx++];
+						break;
+					}
+					th.blockStack.pop();
+                    if(blk.type==="func") th.callStack.pop();
+		    if (blk.type === "loop" || blk.type === "once") th.callStack.pop();
+
+                    if (blk.type === "loop" && --blk.remaining > 0) {
+          						th.blockStack.push({
+							...blk,
+							idx: 0
+						});
+					} else continue;
+				} else {
+					if (th.pc >= th.tokens.length) {
+						threads.splice(tid, 1);
+						tid--;
+						tok = null;
+						break;
+					}
+					tok = th.tokens[th.pc++];
+					break;
+				}
+			}
+			if (tok == null) continue;
+			let [baseTok, labTok] = splitTok(tok);
+			tok = baseTok;
+
+			inst++;
+			if (debug) console.log(`[T${tid}] ${tok} [${S.join(',')}]`);
+			// primitives
+			if (["+", "-", "*", "/", "dup", "swap", "drop", "out"].includes(tok)) {
+				if (tok === "dup") S.push(S.at(-1) ?? 0);
+				else if (tok === "swap") {
+					let b = pop(),
+						a = pop();
+					S.push(b, a);
+				} else if (tok === "drop") pop();
+				else if (tok === "out") {
+					const v = pop();
+					out.push(v);
+					const cs = th.callStack==null ? '' : th.callStack.join("|");
+					const idx = Math.abs(hashCode(`${tid}-${cs}`)) % palette.length;
+					outHTML.push(`<span style='color:${palette[idx]}' title='T${tid}${cs?" @"+cs:""}'>${v}</span>`);
+					vals.push(v);
+					cols.push(palette[idx]);
+					tips.push(`T${tid}${cs?" @"+cs:""}`);
+				} else {
+					let b = pop(),
+						a = pop(),
+						r = 0;
+					switch (tok) {
+						case "+":
+							r = a + b;
+							break;
+						case "-":
+							r = a - b;
+							break;
+						case "*":
+							r = a * b;
+							break;
+						case "/":
+							r = b ? Math.trunc(a / b) : 0;
+					}
+					S.push(CLAMP(r));
+				}
+				continue;
+			}
+			// control blocks helper
+			function collect(label, frame) {
+				const blk = [];
+				let d = 1;
+				while (frame.idx < frame.tokens.length && d) {
+					const t = frame.tokens[frame.idx++];
+					const [b] = splitTok(t);
+					if (b === label) d++;
+					else if (t === "end") d--;
+					if (d) blk.push(t);
+				}
+				return blk;
+			}
+			// current frame ref
+			const frameRef = th.blockStack.length ? th.blockStack[th.blockStack.length - 1] : {
+				tokens: th.tokens,
+				idx: th.pc
+			};
+
+			if (tok === "loop" || tok === "ifg" || tok === "ifl") {
+		                var startBeforeCollect = frameRef.idx;
+				const blk = collect(tok, frameRef);
+				if (tok === "loop") {
+					const n = pop();
+					if (n > 0) {
+					   th.blockStack.push({
+						type: "loop",
+						tokens: blk,
+						idx: 0,
+						remaining: n
+     					   }); 
+					   th.callStack.push(labTok || "LOOP"); 
+					}
+				} else {
+					const b = pop(),
+						a = pop();
+					const ok = (tok === "ifg" && b > a) || (tok === "ifl" && b < a);
+					if (ok) {
+						th.blockStack.push({
+						type: "once",
+						tokens: blk,
+						idx: 0
+	  					}); 
+						th.callStack.push(labTok || tok.toUpperCase()); 
+					}
+				}
+                const blkStart = startBeforeCollect;
+                const blkEnd   = frameRef.idx;          // idx after collect
+                frameRef.tokens.splice(blkStart, blkEnd - blkStart);
+                frameRef.idx = blkStart;               
+				continue;
+			}
+
+			if (tok.startsWith("@")) {
+                const name = tok.slice(1);
+                if (functions[name]) {
+		  const fn = functions[name];
+                  const p1 = pop(), p2 = pop(), p3 = pop();
+                  S.push(p3, p2, p1);
+                  th.blockStack.push({type:"func",tokens:[...fn.body],idx:0});
+                  if (th.callStack==null) th.callStack = [];
+                  th.callStack.push(fn.label || name);
+                }
+                continue;
+              }
+
+			if (tok.startsWith("branch") && tok.length === 7) {
+				const N = +tok[6];
+      				if (N >= 2 && N <= 5) {
+      					const seeds = [];
+                      const seedStartIndex = frameRef.idx;
+                      
+                  for (let i = 0; i < N; i++) {
+                    seeds.push( collectSeed(frameRef) );     // collectSeed returns an array of tokens
+                  }
+const start = seedStartIndex;                // idx value you saved *before* the for-loop
+const end   = frameRef.idx;                  // idx after collecting all N seeds
+frameRef.tokens.splice(start, end - start);  // remove original seed tokens
+frameRef.idx = start;
+  const rest = frameRef.tokens.slice(frameRef.idx);
+                    for (const seed of seeds) {
+                      // deep-clone the *whole* thread
+                      const clone = JSON.parse(JSON.stringify(th));   // or manual deep copy
+                      const top   = clone.blockStack.length ? clone.blockStack[clone.blockStack.length - 1]
+                                                          : { tokens: clone.tokens, idx: frameRef.idx };
+                    top.tokens.splice(top.idx, 0, ...seed); 
+                      clone.callStack = [...clone.callStack, `T${tid}`]; 
+                      threads.push(clone);                            // new parallel thread
+                    }
+
+                  
+					threads.splice(tid, 1);
+					tid--;
+				}
+				continue;
+			}
+
+			const num = parseInt(tok, 10);
+			if (!isNaN(num)) S.push(CLAMP(num));
+		}
+	}
+	document.getElementById("output").innerHTML = "Output: " + outHTML.join(" ");
+	drawGraph(vals, cols, tips);
+    updateLabelsView();  
+	return out.join(" ");
+}
+
+/******************** UI *********************/
+const savedPrograms = [];
+
+function runProgram(d = false) {
+	const code = document.getElementById("program").value.trim();
+	runWithOutput(code, d);
+}
+
+function saveProgram() {
+	const c = document.getElementById("program").value;
+	savedPrograms.push(c);
+	const d = document.createElement("div");
+	d.className = "saved-entry";
+	d.textContent = c;
+	document.getElementById("savedList").prepend(d);
+}
+
+function clearSavedPrograms() {
+	mutCount = 0;
+	updateMutCount();
+	LABELS = { };
+	savedPrograms.length = 0;
+	document.getElementById("savedList").innerHTML = "";
+}
+
+function mutateProgram() {
+	if (autoTimer === null && event?.isTrusted === false) return;
+	const orig = document.getElementById("program").value.trim();
+	if (!orig) return;
+	const origOut = runWithOutput(orig);
+	const toks = orig.split(/\s+/);
+	const start = performance.now();
+	let last = "";
+    let threshold = 0.1;
+      while (threshold < 0.5) {
+    	for (let a = 0; a <200; a++) {
+    		const mut = [...toks];
+    		const cnt = Math.max(1, Math.floor(mut.length * threshold));
+            const idxSet = new Set();
+            while (idxSet.size < cnt) {
+              idxSet.add(Math.floor(Math.random() * mut.length));
+            }
+            idxSet.forEach(idx => {
+		const oldTok = mut[idx];
+		  const [oldBase, oldLabel] = splitTok(oldTok);
+		  const newTok  = randToken();
+		  const [newBase] = splitTok(newTok);
+		  // keep label if we’re only regenerating the same opcode
+		  mut[idx] = (oldLabel && newBase === oldBase) ? oldTok : newTok;
+            });
+    		const code = mut.join(" ");
+    		last = code;
+    		const mOut = runWithOutput(code);
+    		const dist = levenshtein(origOut, mOut);
+    		if (dist >= 1 && dist <= origOut.length * threshold) {
+              // store mutation info (prev, new, distance)
+              const entry = document.createElement("div");
+              entry.className = "saved-entry";
+              entry.textContent = `prev: ${orig} new: ${code} lev: ${dist}`;
+              //document.getElementById("savedList").prepend(entry);
+              document.getElementById("program").value = code;
+              runProgram();
+              return;
+            }
+    		if (performance.now() - start > 1000) {
+    			console.warn("Mutation timeout", last);
+    			break;
+    		}
+    	}
+        document.getElementById("program").value = orig;
+        runProgram();
+        threshold += 0.05;
+    }
+	alert("No acceptable mutation");
+}
+
+window.onload = () => {
+	const q = new URLSearchParams(location.search).get("code");
+	if (q) {
+		document.getElementById("program").value = decodeURIComponent(q);
+		setTimeout(runProgram, 0);
+	}
+	updateMutCount();   // initialise counter to 0 on first load
+};
+</script>
+</body>
+</html>
