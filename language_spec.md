@@ -3,6 +3,7 @@
 Cachi‑Forth is a minimal, stack-based, postfix language for modeling structural complexity. 
 
 ### 🔢 Data Model
+
 Stack: Integer-only
 
 **Execution Limit:** Typically throttled to 1000 timeslice executions (to prevent halting)
@@ -12,11 +13,13 @@ Stack: Integer-only
 ### 🧱 Tokens
 
 📥 Literals
+
 Integer literals: e.g. -5, 42
 
 Clamped to range via modulus: [0 - 127]
 
 ➕ Arithmetic
+
 +, -, *, /: Truncated integer math
 
 Division by zero yields 0
@@ -36,20 +39,20 @@ out – pop and append to output buffer
 ### 🔁 Control Flow
 
 loop ... end
-Pops n; executes body (...) n times
+
+* Pops n; executes body (...) n times
 
 ifg ... end
-Pops a, b; runs body if b > a
-(else is not supported)
+
+* Pops a, b; runs body if b > a (else is not supported)
 
 ifl ... end
-Pops a, b; runs body if b < a
-(else is not supported)
+
+* Pops a, b; runs body if b < a (else is not supported)
 
 ### 🌿 Branching
 branch2, branch3, branch4, branch5
-* Forks parallel threads using next 2–5 tokens as branch seeds
-(if seed starts with a control block, the entire block up to 'end' will be considered 1 seed token)
+* Forks parallel threads using next 2–5 tokens as branch seeds (if seed starts with a control block, the entire block up to 'end' will be considered 1 seed token)
 
 * Each seed token is pushed onto a copy of the current stack
 
@@ -58,8 +61,10 @@ branch2, branch3, branch4, branch5
 * Parent thread terminates after forking
 
 ### 📦 Functions
+
 >name ... end
-Define function name consisting of body ...
+
+* Define function name consisting of body ...
 
 Functions always consume top 3 stack values as #p1, #p2, #p3
 
