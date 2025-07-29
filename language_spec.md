@@ -62,7 +62,7 @@ branch2, branch3, branch4, branch5
 
 ### 📦 Functions
 
->name ... end
+>>name ... end
 
 * Define function name consisting of body ...
 
