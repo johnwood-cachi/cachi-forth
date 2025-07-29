@@ -107,6 +107,7 @@ function generateRandomProgram() {
 	mutCount = 0;
 	updateMutCount();
 	pressureVal = 0;
+	pressureHist = [];
 	updatePressure();
 	if (autoTimer) toggleAuto();   // ensure auto-evolve halts on Clear
 
@@ -130,10 +131,17 @@ function updateMutCount () {
 }
 
 let pressureVal = 0;                // last-measured stability pressure
-
+const PRESS_WINDOW = 20;        // size of the rolling window
+let   pressureHist = [];        // holds the most-recent values
+	
 function updatePressure () {        // refresh the UI
+  // compute mean of the window (default 0 if empty)
+  const mean = pressureHist.length
+        ? pressureHist.reduce((s,v) => s + v, 0) / pressureHist.length
+        : 0;
+
   const el = document.getElementById("pressureVal");
-  if (el) el.textContent = pressureVal;
+  if (el) el.textContent = mean.toFixed(1);      // one-decimal display
 }
 
 function toggleAuto () {
@@ -515,9 +523,14 @@ function mutateProgram() {
               //document.getElementById("savedList").prepend(entry);
               document.getElementById("program").value = code;
               runProgram();
-	      pressureVal = attempts - 1;
-	      updatePressure();
-              return;
+		pressureVal = attempts - 1;          // latest raw value
+		
+		pressureHist.push(pressureVal);      // store in the rolling window
+		if (pressureHist.length > PRESS_WINDOW)
+		    pressureHist.shift();            // drop oldest
+		
+		updatePressure();
+			return;
             }
     		if (performance.now() - start > 1000) {
     			console.warn("Mutation timeout", last);
@@ -528,8 +541,6 @@ function mutateProgram() {
         runProgram();
         threshold += 0.05;
     }
-      pressureVal = attempts;
-      updatePressure();
 	alert("No acceptable mutation");
 }
 
