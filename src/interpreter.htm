@@ -23,7 +23,8 @@
   <button onclick="mutateProgram()">Mutate</button>
   <button onclick="clearSavedPrograms()">Clear</button>
 <button id="autoBtn" onclick="toggleAuto()">Start</button>
-<span id="mutCount">0</span>
+&nbsp;Generation: <span id="mutCount">0</span>
+&nbsp;|&nbsp;Pressure:&nbsp;<span id="pressureVal">0</span>
   <div id="output"></div>
   <svg id="graph"></svg>
 <div id="labelsArea">
@@ -105,6 +106,8 @@ function randToken(valid = funcNames){
 function generateRandomProgram() {
 	mutCount = 0;
 	updateMutCount();
+	pressureVal = 0;
+	updatePressure();
 	if (autoTimer) toggleAuto();   // ensure auto-evolve halts on Clear
 
 	const tot = 50,
@@ -124,6 +127,13 @@ function generateRandomProgram() {
 function updateMutCount () {
   const el = document.getElementById("mutCount");
   if (el) el.textContent = mutCount;
+}
+
+let pressureVal = 0;                // last-measured stability pressure
+
+function updatePressure () {        // refresh the UI
+  const el = document.getElementById("pressureVal");
+  if (el) el.textContent = pressureVal;
 }
 
 function toggleAuto () {
@@ -467,6 +477,7 @@ function clearSavedPrograms() {
 }
 
 function mutateProgram() {
+	let attempts = 0;
 	if (autoTimer === null && event?.isTrusted === false) return;
 	const orig = document.getElementById("program").value.trim();
 	if (!orig) return;
@@ -477,6 +488,7 @@ function mutateProgram() {
     let threshold = 0.1;
       while (threshold < 0.5) {
     	for (let a = 0; a <200; a++) {
+		attempts++;
     		const mut = [...toks];
     		const cnt = Math.max(1, Math.floor(mut.length * threshold));
             const idxSet = new Set();
@@ -503,6 +515,8 @@ function mutateProgram() {
               //document.getElementById("savedList").prepend(entry);
               document.getElementById("program").value = code;
               runProgram();
+	      pressureVal = attempts - 1;
+	      updatePressure();
               return;
             }
     		if (performance.now() - start > 1000) {
@@ -514,6 +528,8 @@ function mutateProgram() {
         runProgram();
         threshold += 0.05;
     }
+      pressureVal = attempts;
+      updatePressure();
 	alert("No acceptable mutation");
 }
 
