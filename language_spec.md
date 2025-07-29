@@ -20,38 +20,37 @@ Clamped to range via modulus: [0 - 127]
 
 ➕ Arithmetic
 
-+, -, *, /: Truncated integer math
-
-Division by zero yields 0
+> +, -, *, /
+Truncated integer math. Division by zero yields 0.
 
 ### 🌀 Stack Manipulation
 
-dup – duplicate top value
+*dup* – duplicate top value
 
-swap – swap top two values
+*swap* – swap top two values
 
-drop – discard top value
+*drop* – discard top value
 
 ### 📤 Output
 
-out – pop and append to output buffer
+*out* – pop and append to output buffer
 
 ### 🔁 Control Flow
 
-loop ... end
+> loop ... end
 
 * Pops n; executes body (...) n times
 
-ifg ... end
+> ifg ... end
 
 * Pops a, b; runs body if b > a (else is not supported)
 
-ifl ... end
+> ifl ... end
 
 * Pops a, b; runs body if b < a (else is not supported)
 
 ### 🌿 Branching
-branch2, branch3, branch4, branch5
+> branch2, branch3, branch4, branch5
 * Forks parallel threads using next 2–5 tokens as branch seeds (if seed starts with a control block, the entire block up to 'end' will be considered 1 seed token)
 
 * Each seed token is pushed onto a copy of the current stack
@@ -62,13 +61,13 @@ branch2, branch3, branch4, branch5
 
 ### 📦 Functions
 
->>name ... end
+> \>name ... end
 
 * Define function name consisting of body ...
 
-Functions always consume top 3 stack values as #p1, #p2, #p3
+Functions always reference top 3 stack values as #p1, #p2 and #p3
 
-* Invoked via @name
+* Invoked via @name (if function does not exist, it is ignored)
 
 * Function body can invoke other functions, including itself recursively
 
@@ -85,7 +84,7 @@ No dynamic scope or named variables; all state is stack-based (but #p1, #p2 and 
 
 Cachi-Forth is very forgiving and will not produce runtime errors. Instruction execution limit stops infinite or excessive loops. No programs can be halting.
 
-### PURPOSE:
+## PURPOSE:
 
 This language was created to explore Algorithmic Information Theory concepts, such as Kolmogorov complexity and Solomononoff induction.
 In particular it was designed to model inference processes via abstractions (functions) and their (conditional) invocation and propagation
