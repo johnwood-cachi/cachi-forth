@@ -1,6 +1,6 @@
 # Cachi-Forth Interpreter
 
-An in-browser, mutation-aware interpreter for [**Cachi-Forth**](/cachi-forth/blob/main/language_spec.md), a toy stack language
+An in-browser, mutation-aware interpreter for [**Cachi-Forth**](language_spec.md), a toy stack language
 built to explore Algorithmic Information Theory dynamics, and for the [CACHI](https://cachi.wiki)
 research project. 
 
