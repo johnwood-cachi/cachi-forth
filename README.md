@@ -4,6 +4,8 @@ An in-browser, mutation-aware interpreter for **Cachi-Forth**, a toy stack langu
 built to explore Algorithmic Information Theory dynamics, and for the [CACHI](https://cachi.wiki)
 research project. 
 
+[TRY IT HERE](https://johnwood-cachi.github.io/cachi-forth/src/interpreter.htm)
+
 ## Features
 * **Minimal forth-style language** - very simple, stack-based language designed specifically
 to a) have no syntactical sugar and b) withstand program mutations.
