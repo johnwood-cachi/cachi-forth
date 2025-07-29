@@ -1,11 +1,11 @@
 ## Cachi‑Forth Language Specification
 
-Cachi‑Forth is a minimal, stack-based, postfix language for modeling structural complexity. All values are clamped to integers in [-127, 128], and execution is bounded to 100 instructions per run.
+Cachi‑Forth is a minimal, stack-based, postfix language for modeling structural complexity. 
 
 ### 🔢 Data Model
 Stack: Integer-only
 
-**Execution Limit:** Max 1000 timeslice executions
+**Execution Limit:** Typically throttled to 1000 timeslice executions (to prevent halting)
 
 **Output:** Emitted via out, collected in output buffer
 
@@ -73,7 +73,6 @@ Any control-block command can contain a label, in this format: command:label. Fo
 Labels cannot contain spaces. Labels are used for commenting and tracking purposes, especially during mutations.
 
 🛡️ Notes
-Programs should be syntactically self-contained (e.g. all control blocks must terminate with end)
 
 Functions and control blocks may be nested
 
@@ -81,8 +80,11 @@ No dynamic scope or named variables; all state is stack-based (but #p1, #p2 and 
 
 Cachi-Forth is very forgiving and will not produce runtime errors. Instruction execution limit stops infinite or excessive loops. No programs can be halting.
 
-PURPOSE:
+### PURPOSE:
 
 This language was created to explore Algorithmic Information Theory concepts, such as Kolmogorov complexity and Solomononoff induction.
 In particular it was designed to model inference processes via abstractions (functions) and their (conditional) invocation and propagation
 of execution. The motivation is for it to let us model and simulate neural processing in the brain and also LLMs.
+
+Technically, Cachi-Forth is Turing-complete (the execution limit is imposed just for practicability).
+
