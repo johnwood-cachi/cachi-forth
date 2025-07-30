@@ -422,10 +422,13 @@ function runWithOutput(src, debug = false) {
 						th.callStack.push(labTok || tok.toUpperCase()); 
 					}
 				}
-                const blkStart = startBeforeCollect;
-                const blkEnd   = frameRef.idx;          // idx after collect
-                frameRef.tokens.splice(blkStart, blkEnd - blkStart);
-                frameRef.idx = blkStart;               
+				 // Splice only once, at top level, so nested loops remain intact
+				if (frameRef.tokens === th.tokens) {
+				   const blkStart = startBeforeCollect;
+				   const blkEnd   = frameRef.idx;          // idx after collect
+				   frameRef.tokens.splice(blkStart, blkEnd - blkStart);
+				   frameRef.idx = blkStart;
+				 }
 				continue;
 			}
 
@@ -507,9 +510,7 @@ function clearSavedPrograms() {
 	updateMutCount();
 	LABELS = { };
 	savedPrograms.length = 0;
-    const { len, cc } = getMetrics(code.split(/\s+/));
-    updateMetricsView(len, cc);
-	document.getElementById("savedList").innerHTML = "";
+    document.getElementById("savedList").innerHTML = "";
 }
 
 function mutateProgram() {
