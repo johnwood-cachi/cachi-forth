@@ -232,14 +232,14 @@ function drawGraph(vals, cols, titles) {
 }
 
   function collectSeed(frame) {
+    const opens = ["loop", "ifg", "ifl"];
     const first = frame.tokens[frame.idx++];
-    if (!["ifg","ifl","loop"].includes(first)) return [first];   // simple token
-  
+    
     const block=[], label=first; let depth=1;
     while (frame.idx < frame.tokens.length && depth) {
       const t=frame.tokens[frame.idx++];
 	const [b] = splitTok(t);
-	if (b === label) depth++;
+	if (opens.includes(b)) depth++;
       else if (t==="end") depth--;
       block.push(t);
       if (!depth) break;
@@ -377,12 +377,13 @@ function runWithOutput(src, debug = false) {
 			}
 			// control blocks helper
 			function collect(label, frame) {
-				const blk = [];
+				const blk = []; 
 				let d = 1;
+              const opens = ["loop", "ifg", "ifl"]; 
 				while (frame.idx < frame.tokens.length && d) {
 					const t = frame.tokens[frame.idx++];
 					const [b] = splitTok(t);
-					if (b === label) d++;
+					if (opens.includes(b)) d++;
 					else if (t === "end") d--;
 					if (d) blk.push(t);
 				}
@@ -395,7 +396,7 @@ function runWithOutput(src, debug = false) {
 			};
 
 			if (tok === "loop" || tok === "ifg" || tok === "ifl") {
-		                var startBeforeCollect = frameRef.idx;
+		                var startBeforeCollect = frameRef.idx - 1;
 				const blk = collect(tok, frameRef);
 				if (tok === "loop") {
 					const n = pop();
@@ -581,6 +582,6 @@ window.onload = () => {
 	}
 	updateMutCount();   // initialise counter to 0 on first load
 };
-</script>
+</script> 
 </body>
 </html>
