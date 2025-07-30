@@ -55,6 +55,13 @@ const splitTok = t => {
   return idx === -1 ? [t, null] : [t.slice(0, idx), t.slice(idx + 1)];
 };
 
+const isControl = (tok) => {
+  const [b] = splitTok(tok);
+  return b === "loop" || b === "ifg" || b === "ifl" ||
+         b.startsWith("@") ||                      // function call
+         (b.startsWith("branch") && b.length === 7);
+};
+
 function hashCode(str) {
 	let h = 0;
 	for (let i = 0; i < str.length; i++) {
@@ -525,22 +532,57 @@ function mutateProgram() {
     let threshold = 0.1;
       while (threshold < 0.5) {
     	for (let a = 0; a <200; a++) {
-		attempts++;
-    		const mut = [...toks];
-    		const cnt = Math.max(1, Math.floor(mut.length * threshold));
-            const idxSet = new Set();
-            while (idxSet.size < cnt) {
-              idxSet.add(Math.floor(Math.random() * mut.length));
-            }
-            idxSet.forEach(idx => {
-		const oldTok = mut[idx];
-		  const [oldBase, oldLabel] = splitTok(oldTok);
-		  const newTok  = randToken();
-		  const [newBase] = splitTok(newTok);
-		  // keep label if we’re only regenerating the same opcode
-		  mut[idx] = (oldLabel && newBase === oldBase) ? oldTok : newTok;
-            });
-    		const code = mut.join(" ");
+		    attempts++;
+
+          // ------------------------------------------------------------------
+        // Pick exactly `cnt` distinct indices that WILL change the token.
+        // Guarantee at least one is (or becomes) a control-block opcode.
+        // ------------------------------------------------------------------
+        const mut       = [...toks];
+          const cnt = Math.max(1, Math.floor(mut.length * threshold)); 
+        const chosenIdx = new Set();
+        let controlHit  = false;
+        
+        while (chosenIdx.size < cnt) {
+          const idx = Math.floor(Math.random() * mut.length);
+          if (chosenIdx.has(idx)) continue;           // uniqueness
+        
+          const oldTok               = mut[idx]; 
+          const [oldBase, oldLabel]  = splitTok(oldTok);
+        
+          // generate until we get something *different* from oldTok
+          let newTok, newBase;
+          do {
+            newTok  = randToken();
+            [newBase] = splitTok(newTok);
+          } while (newTok === oldTok);                // ensure change
+        
+          // keep label if opcode unchanged
+          const finalTok =
+            (oldLabel && newBase === oldBase) ? oldTok : newTok;
+        
+          mut[idx] = finalTok;
+          chosenIdx.add(idx);
+        
+          // check control-block criterion
+          if (isControl(oldTok) || isControl(finalTok)) controlHit = true;
+        }
+        
+        // If we somehow picked no control change, force one:
+        // replace a random chosen index with a fresh control token.
+        if (!controlHit) {
+          const idxArr   = Array.from(chosenIdx);
+          const forceIdx = idxArr[Math.floor(Math.random() * idxArr.length)];
+        
+          let ctrlTok;
+          do { ctrlTok = randToken(); }
+          while (!isControl(ctrlTok));                // pick a control token
+        
+          mut[forceIdx] = ctrlTok;                    // overwrite
+        }
+          
+          
+            const code = mut.join(" ");
     		last = code;
     		const mOut = runWithOutput(code);
     		const dist = levenshtein(origOut, mOut);
@@ -563,8 +605,8 @@ function mutateProgram() {
             updateMetricsView(len, cc);              
 			return;
             }
-    		if (performance.now() - start > 1000) {
-    			console.warn("Mutation timeout", last);
+    		if (performance.now() - start > 10000) {
+    			alert("No acceptable mutation (timeout)"); 
     			break;
     		}
     	}
@@ -584,5 +626,5 @@ window.onload = () => {
 	updateMutCount();   // initialise counter to 0 on first load
 };
 </script> 
-</body>
+</body> 
 </html>
