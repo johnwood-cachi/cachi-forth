@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Cachi‑Forth Interpreter</title>
-  <style>
+  <style> 
     body{font-family:monospace;background:#111;color:#eee;padding:20px}
     textarea{width:100%;height:200px;background:#222;color:#0f0;border:1px solid #555;padding:10px;font-size:14px}
     button{margin:10px 10px 10px 0;padding:10px}
@@ -27,7 +27,9 @@
 &nbsp;Generation: <span id="mutCount">0</span>
 &nbsp;|&nbsp;Pressure:&nbsp;<span id="pressureVal">0</span>
   &nbsp;|&nbsp;Len: &nbsp;<span id="progLen">0</span>
-&nbsp;|&nbsp;CC:&nbsp;<span id="ccVal">0</span></div>
+&nbsp;|&nbsp;CC:&nbsp;<span id="ccVal">0</span>
+    &nbsp;|&nbsp;Steps:&nbsp;<span id="stepCount">0</span>
+  </div>
   <div id="output"></div>
   <svg id="graph"></svg>
 <div id="labelsArea">
@@ -48,6 +50,8 @@ let LABELS = {};   // label-string  -> tokenIndex (-1 = missing)
 let autoTimer   = null;   // holds setInterval handle
 let mutCount    = 0;      // shown in UI
 const STEP_MS   = 200;    // mutation cadence (adjust to taste)
+let stepCount = 0;
+let stepPeg = 0;
 
 const splitTok = t => {
 	if (t==null) return [ "", "" ];
@@ -63,7 +67,7 @@ const isControl = (tok) => {
 };
 
 function hashCode(str) {
-	let h = 0;
+	let h = 0; 
 	for (let i = 0; i < str.length; i++) {
 		h = ((h << 5) - h) + str.charCodeAt(i);
 		h |= 0;
@@ -151,6 +155,7 @@ function generateRandomProgram() {
 function updateMetricsView (len, cc) {
   const lEl = document.getElementById("progLen");
   const cEl = document.getElementById("ccVal");
+  document.getElementById("stepCount").textContent = stepCount;
   if (lEl) lEl.textContent = len;
   if (cEl) cEl.textContent = cc;
 }
@@ -263,7 +268,7 @@ function runWithOutput(src, debug = false) {
 	  const [, lab] = splitTok(t);
 	  if (lab) LABELS[lab] = i;          // absolute offset in original token list
 	});
-
+    let thisStep = 0;
 	const functions = {};
 	const main = parseDefs(tokens, functions);
 	const threads = [{
@@ -489,6 +494,7 @@ frameRef.idx = start;
 	}
 	document.getElementById("output").innerHTML = "Output: " + outHTML.join(" ");
 	const { len, cc } = getMetrics(tokens);
+    stepCount = inst;
   updateMetricsView(len, cc);
   drawGraph(vals, cols, tips);
     updateLabelsView();  
@@ -519,103 +525,54 @@ function clearSavedPrograms() {
 	savedPrograms.length = 0;
     document.getElementById("savedList").innerHTML = "";
 }
-
 function mutateProgram() {
-	let attempts = 0;
-	if (autoTimer === null && event?.isTrusted === false) return;
-	const orig = document.getElementById("program").value.trim();
-	if (!orig) return;
-	const origOut = runWithOutput(orig);
-	const toks = orig.split(/\s+/);
-	const start = performance.now();
-	let last = "";
-    let threshold = 0.1;
-      while (threshold < 0.5) {
-    	for (let a = 0; a <200; a++) {
-		    attempts++;
+  const orig = document.getElementById("program").value.trim();
+  if (!orig) return;
 
-          // ------------------------------------------------------------------
-        // Pick exactly `cnt` distinct indices that WILL change the token.
-        // Guarantee at least one is (or becomes) a control-block opcode.
-        // ------------------------------------------------------------------
-        const mut       = [...toks];
-          const cnt = Math.max(1, Math.floor(mut.length * threshold)); 
-        const chosenIdx = new Set();
-        let controlHit  = false;
-        
-        while (chosenIdx.size < cnt) {
-          const idx = Math.floor(Math.random() * mut.length);
-          if (chosenIdx.has(idx)) continue;           // uniqueness
-        
-          const oldTok               = mut[idx]; 
-          const [oldBase, oldLabel]  = splitTok(oldTok);
-        
-          // generate until we get something *different* from oldTok
-          let newTok, newBase;
-          do {
-            newTok  = randToken();
-            [newBase] = splitTok(newTok);
-          } while (newTok === oldTok);                // ensure change
-        
-          // keep label if opcode unchanged
-          const finalTok =
-            (oldLabel && newBase === oldBase) ? oldTok : newTok;
-        
-          mut[idx] = finalTok;
-          chosenIdx.add(idx);
-        
-          // check control-block criterion
-          if (isControl(oldTok) || isControl(finalTok)) controlHit = true;
-        }
-        
-        // If we somehow picked no control change, force one:
-        // replace a random chosen index with a fresh control token.
-        if (!controlHit) {
-          const idxArr   = Array.from(chosenIdx);
-          const forceIdx = idxArr[Math.floor(Math.random() * idxArr.length)];
-        
-          let ctrlTok;
-          do { ctrlTok = randToken(); }
-          while (!isControl(ctrlTok));                // pick a control token
-        
-          mut[forceIdx] = ctrlTok;                    // overwrite
-        }
-          
-          
-            const code = mut.join(" ");
-    		last = code;
-    		const mOut = runWithOutput(code);
-    		const dist = levenshtein(origOut, mOut);
-    		if (dist >= 1 && dist <= origOut.length * threshold) {
-              // store mutation info (prev, new, distance)
-              const entry = document.createElement("div");
-              entry.className = "saved-entry";
-              entry.textContent = `prev: ${orig} new: ${code} lev: ${dist}`;
-              //document.getElementById("savedList").prepend(entry);
-              document.getElementById("program").value = code;
-              runProgram();
-		pressureVal = attempts - 1;          // latest raw value  
-		  
-		pressureHist.push(pressureVal);      // store in the rolling window
-		if (pressureHist.length > PRESS_WINDOW)
-		    pressureHist.shift();            // drop oldest
-		
-      		updatePressure();
-            const { len, cc } = getMetrics(code.split(/\s+/));
-            updateMetricsView(len, cc);              
-			return;
-            }
-    		if (performance.now() - start > 10000) {
-    			alert("No acceptable mutation (timeout)"); 
-    			break;
-    		}
-    	}
-        document.getElementById("program").value = orig;
+  const toks = orig.split(/\s+/);
+  const origLen = toks.length;
+  const origOut = runWithOutput(orig);
+  const origStep = stepCount;
+  const maxStepDelta = Math.ceil(origStep * 0.1); // 10% margin on steps
+  const maxAttemptsPerDelta = 100;
+
+  let deltaTokens = 1;
+
+  while (deltaTokens <= toks.length) {
+    for (let attempt = 0; attempt < maxAttemptsPerDelta; attempt++) {
+      let mut = [...toks];
+      const indices = new Set();
+      while (indices.size < deltaTokens) {
+        indices.add(Math.floor(Math.random() * toks.length));
+      }
+      for (const idx of indices) {
+        let newTok;
+        do {
+          newTok = randToken();
+        } while (newTok === mut[idx]);
+        mut[idx] = newTok;
+      }
+
+      const newCode = mut.join(" ");
+      const newOut = runWithOutput(newCode);
+      const newStep = stepCount;
+
+      if (
+        Math.abs(newStep - origStep) <= maxStepDelta &&
+        newOut !== origOut &&
+        mut.length === origLen
+      ) {
+        document.getElementById("program").value = newCode;
         runProgram();
-        threshold += 0.05;
+        return;
+      }
     }
-	alert("No acceptable mutation");
+    deltaTokens++;
+  }
+
+  alert("No acceptable mutation found within constraints.");
 }
+
 
 window.onload = () => {
 	const q = new URLSearchParams(location.search).get("code");
