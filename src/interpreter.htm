@@ -29,6 +29,7 @@
   &nbsp;|&nbsp;Len: &nbsp;<span id="progLen">0</span>
 &nbsp;|&nbsp;CC:&nbsp;<span id="ccVal">0</span>
     &nbsp;|&nbsp;Steps:&nbsp;<span id="stepCount">0</span>
+    &nbsp;|&nbsp;Cost:&nbsp;<span id="cost">0</span>
   </div>
   <div id="output"></div>
   <svg id="graph"></svg>
@@ -156,6 +157,7 @@ function updateMetricsView (len, cc) {
   const lEl = document.getElementById("progLen");
   const cEl = document.getElementById("ccVal");
   document.getElementById("stepCount").textContent = stepCount;
+  document.getElementById("cost").textContent = (len * stepCount);
   if (lEl) lEl.textContent = len;
   if (cEl) cEl.textContent = cc;
 }
