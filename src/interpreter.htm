@@ -361,7 +361,7 @@ function runWithOutput(src, debug = false) {
 					S.push(b, a);
 				} else if (tok === "drop") pop();
 				else if (tok === "bit") bitCounter++;
-				else if (tok === "bval") { push(bitCounter); bitCounter = 0; }
+				else if (tok === "bval") { S.push(bitCounter); bitCounter = 0; }
 				else if (tok === "out") {
 				  let v;
 				  if (bitCounter > 0) {
