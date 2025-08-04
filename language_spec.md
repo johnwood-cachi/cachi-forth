@@ -31,9 +31,11 @@ Truncated integer math. Division by zero yields 0.
 
 *drop* – discard top value
 
+*bit* – increments an internal global counter. When "out" is run, will output and reset the counter if the counter > 0.
+
 ### 📤 Output
 
-*out* – pop and append to output buffer
+*out* – pop and append to output buffer. If the bit counter is > 0, will output and reset the bit counter instead.
 
 ### 🔁 Control Flow
 
