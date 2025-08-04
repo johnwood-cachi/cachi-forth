@@ -33,6 +33,8 @@ Truncated integer math. Division by zero yields 0.
 
 *bit* – increments an internal global counter. When "out" is run, will output and reset the counter if the counter > 0.
 
+*bval* – pushes the bit counter onto the stack, and resets it.
+
 ### 📤 Output
 
 *out* – pop and append to output buffer. If the bit counter is > 0, will output and reset the bit counter instead.
