@@ -31,7 +31,7 @@
     &nbsp;|&nbsp;Steps:&nbsp;<span id="stepCount">0</span>
     &nbsp;|&nbsp;Cost:&nbsp;<span id="cost">0</span>
   </div>
-  <div id="output"></div>
+  <div id="output"></div>  
   <svg id="graph"></svg>
 <div id="labelsArea">
   <h2>Labels</h2>
@@ -53,6 +53,7 @@ let mutCount    = 0;      // shown in UI
 const STEP_MS   = 200;    // mutation cadence (adjust to taste)
 let stepCount = 0;
 let stepPeg = 0;
+let bitCounter = 0;
 
 const splitTok = t => {
 	if (t==null) return [ "", "" ];
@@ -90,7 +91,7 @@ function levenshtein(a, b) {
 }
 
 /******************** TOKEN POOLS *********************/
-const instrPool = ["+", "-", "*", "/", "dup", "swap", "drop", "out"];
+const instrPool = ["+", "-", "*", "/", "dup", "swap", "bit", "out"];
 const ctrlPool = ["loop", "ifg", "ifl", "branch2", "branch3", "branch4", "branch5"];
 const funcNames = ["func1", "func2", "func3", "func4", "func5"];
 
@@ -101,7 +102,7 @@ function randToken(valid = funcNames){
   if(r < 0.5) return (Math.floor(Math.random()*256) - 127).toString();
   // 25% chance: common ops with heavier weight on `out`
   if(r < 0.75){
-    const fav = ["dup","swap","drop","out","out","out"];
+    const fav = ["dup","swap","bit", "drop","out","out","out"];
     return fav[Math.floor(Math.random()*fav.length)];
   }
   // 25% chance: control / function tokens
@@ -352,15 +353,22 @@ function runWithOutput(src, debug = false) {
 			inst++;
 			if (debug) console.log(`[T${tid}] ${tok} [${S.join(',')}]`);
 			// primitives
-			if (["+", "-", "*", "/", "dup", "swap", "drop", "out"].includes(tok)) {
+			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "bit"].includes(tok)) {
 				if (tok === "dup") S.push(S.at(-1) ?? 0);
 				else if (tok === "swap") {
 					let b = pop(),
 						a = pop();
 					S.push(b, a);
 				} else if (tok === "drop") pop();
+				else if (tok === "bit") bitCounter++;
 				else if (tok === "out") {
-					const v = pop();
+				  let v;
+				  if (bitCounter > 0) {
+				    v = bitCounter;
+				    bitCounter = 0;
+				  } else {
+				    v = pop();
+				  }
 					out.push(v);
 					const cs = th.callStack==null ? '' : th.callStack.join("|");
 					const idx = Math.abs(hashCode(`${tid}-${cs}`)) % palette.length;
@@ -558,7 +566,7 @@ function mutateProgram() {
       const newCode = mut.join(" ");
       const newOut = runWithOutput(newCode);
       const newStep = stepCount;
-
+ 
       if (
         Math.abs(newStep - origStep) <= maxStepDelta &&
         newOut !== origOut &&
