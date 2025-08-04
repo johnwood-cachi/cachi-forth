@@ -91,7 +91,7 @@ function levenshtein(a, b) {
 }
 
 /******************** TOKEN POOLS *********************/
-const instrPool = ["+", "-", "*", "/", "dup", "swap", "bit", "out"];
+const instrPool = ["+", "-", "*", "/", "dup", "swap", "bit", "bval", "out"];
 const ctrlPool = ["loop", "ifg", "ifl", "branch2", "branch3", "branch4", "branch5"];
 const funcNames = ["func1", "func2", "func3", "func4", "func5"];
 
@@ -102,7 +102,7 @@ function randToken(valid = funcNames){
   if(r < 0.5) return (Math.floor(Math.random()*256) - 127).toString();
   // 25% chance: common ops with heavier weight on `out`
   if(r < 0.75){
-    const fav = ["dup","swap","bit", "drop","out","out","out"];
+    const fav = ["dup","swap","bit", "bval", "drop","out","out","out"];
     return fav[Math.floor(Math.random()*fav.length)];
   }
   // 25% chance: control / function tokens
@@ -353,7 +353,7 @@ function runWithOutput(src, debug = false) {
 			inst++;
 			if (debug) console.log(`[T${tid}] ${tok} [${S.join(',')}]`);
 			// primitives
-			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "bit"].includes(tok)) {
+			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "bit", "bval"].includes(tok)) {
 				if (tok === "dup") S.push(S.at(-1) ?? 0);
 				else if (tok === "swap") {
 					let b = pop(),
@@ -361,6 +361,7 @@ function runWithOutput(src, debug = false) {
 					S.push(b, a);
 				} else if (tok === "drop") pop();
 				else if (tok === "bit") bitCounter++;
+				else if (tok === "bval") { push(bitCounter); bitCounter = 0; }
 				else if (tok === "out") {
 				  let v;
 				  if (bitCounter > 0) {
