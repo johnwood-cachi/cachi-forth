@@ -44,7 +44,8 @@
 
 <script>
 /******************** CONSTANTS & HELPERS *********************/
-const MAX_INST = 1000;
+const MAX_INST = 2000;
+const ANCHOR_STEPS = 25;
 const CLAMP = v => ((v % 128) + 128) % 128;
 let LABELS = {};   // label-string  -> tokenIndex (-1 = missing)
 
@@ -54,7 +55,8 @@ const STEP_MS   = 200;    // mutation cadence (adjust to taste)
 let stepCount = 0;
 let stepPeg = 0;
 let bitCounter = 0;
-
+let targetSteps = 0;
+	
 const splitTok = t => {
 	if (t==null) return [ "", "" ];
   const idx = t.indexOf(':');
@@ -102,7 +104,7 @@ function randToken(valid = funcNames){
   if(r < 0.5) return (Math.floor(Math.random()*256) - 127).toString();
   // 25% chance: common ops with heavier weight on `out`
   if(r < 0.75){
-    const fav = ["dup","swap","bit", "bval", "drop","out","out","out"];
+    const fav = ["dup","swap","bit", "bval", "@random", "@time", "drop","out","out","out"];
     return fav[Math.floor(Math.random()*fav.length)];
   }
   // 25% chance: control / function tokens
@@ -189,12 +191,14 @@ function toggleAuto () {
   if (autoTimer) {                 // ----- STOP -----
     clearInterval(autoTimer);
     autoTimer = null;
+    targetSteps = 0;
     btn.textContent = "Start";
     return;
   }
 
   // ----- START -----
   btn.textContent = "Stop";
+  targetSteps = stepCount;
   autoTimer = setInterval(() => {
     const lost = Object.values(LABELS).some(v => v === -1);
     if (lost) {                    // stop if any label vanished
@@ -246,21 +250,30 @@ function drawGraph(vals, cols, titles) {
 	svg.innerHTML = g;
 }
 
-  function collectSeed(frame) {
-    const opens = ["loop", "ifg", "ifl"];
-    const first = frame.tokens[frame.idx++];
-    
-    const block=[], label=first; let depth=1;
-    while (frame.idx < frame.tokens.length && depth) {
-      const t=frame.tokens[frame.idx++];
-	const [b] = splitTok(t);
-	if (opens.includes(b)) depth++;
-      else if (t==="end") depth--;
-      block.push(t);
-      if (!depth) break;
-    }
-  return [first, ...block];        // full control block
+function collectSeed(frame) {
+  const opens = ["loop", "ifg", "ifl"];      // tokens that own an `end`
+  const first = frame.tokens[frame.idx++];   // grab the seed’s first token
+  const block = [first];                     // start building the seed array
+ 
+  // ---- NEW: decide if we need to collect a whole control block ----
+  const [base] = splitTok(first);
+  if (!opens.includes(base)) {
+    // Plain literal / primitive / @call / branchN token – seed is just one token.
+    return block;
+  }
+
+  // ---- Existing behaviour for real control blocks ----
+  let depth = 1;
+  while (frame.idx < frame.tokens.length && depth) {
+    const t = frame.tokens[frame.idx++];
+    const [b] = splitTok(t);
+    if (opens.includes(b)) depth++;
+    else if (t === "end")  depth--;
+    block.push(t);
+  }
+  return block;
 }
+
 
 /******************** INTERPRETER *********************/
 function runWithOutput(src, debug = false) {
@@ -334,6 +347,7 @@ function runWithOutput(src, debug = false) {
 							...blk,
 							idx: 0
 						});
+			    			th.callStack.push(blk.label || "LOOP"); 
 					} else continue;
 				} else {
 					if (th.pc >= th.tokens.length) {
@@ -457,6 +471,19 @@ function runWithOutput(src, debug = false) {
 
 			if (tok.startsWith("@")) {
                 const name = tok.slice(1);
+		  // --- Novelty Anchors ---
+		  if (name === "time") {
+		    S.push(CLAMP(new Date().getSeconds()) % 10);
+		    // we favor external inputs like random and time
+		    inst = inst + ANCHOR_STEPS;
+		    continue;
+		  }
+		  if (name === "random") {
+		    S.push(CLAMP(Math.floor(Math.random() * 128)));
+		    // we favor external inputs like random and time
+		    inst = inst + ANCHOR_STEPS;
+		    continue;
+		  }		
                 if (functions[name]) {
 		  const fn = functions[name];
                   const p1 = pop(), p2 = pop(), p3 = pop();
@@ -557,7 +584,9 @@ function mutateProgram() {
         indices.add(Math.floor(Math.random() * toks.length));
       }
       for (const idx of indices) {
-        let newTok;
+  	// Skip mutation if the token is @time or @random
+  	if (["@time", "@random"].includes(mut[idx])) continue;
+	let newTok;
         do {
           newTok = randToken();
         } while (newTok === mut[idx]);
@@ -569,7 +598,7 @@ function mutateProgram() {
       const newStep = stepCount;
  
       if (
-        Math.abs(newStep - origStep) <= maxStepDelta &&
+        Math.abs(newStep - (targetSteps==0 ? origStep : targetSteps)) <= maxStepDelta &&
         newOut !== origOut &&
         mut.length === origLen
       ) {
