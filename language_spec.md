@@ -35,7 +35,7 @@ Truncated integer math. Division by zero yields 0.
 
 *bval* – pushes the bit counter onto the stack, and resets it.
 
-*\@last" - pops a value off the stack, uses that value as an index into the LAST-RUN output (modulused), pushes it on the stack.
+\@last* - pops a value off the stack, uses that value as an index into the LAST-RUN output (modulused), pushes it on the stack.
 
 ### 📤 Output
 
