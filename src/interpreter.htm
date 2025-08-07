@@ -624,7 +624,7 @@ function mutateProgram() {
   // Build list of indices that are actually safe to mutate
   const mutableIndices = [];
   for (let i = 0; i < toks.length; i++) {
-    if (!protected.has(i) && toks[i] !== "@time" && toks[i] !== "@random") {
+    if (!protected.has(i) ) {
       mutableIndices.push(i);
     }
   }
@@ -651,7 +651,6 @@ function mutateProgram() {
         indices.add(idx);
       }
       for (const idx of indices) {
-    	// Skip mutation if the token is @time or @random
 	let newTok;
         do {
           newTok = randToken();
