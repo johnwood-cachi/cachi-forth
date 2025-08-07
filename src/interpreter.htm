@@ -105,7 +105,7 @@ function randToken(valid = funcNames){
   if(r < 0.5) return (Math.floor(Math.random()*256) - 127).toString();
   // 25% chance: common ops with heavier weight on `out`
   if(r < 0.75){
-    const fav = ["dup","swap","bit", "bval", "@random", "@time", "drop","out","out","out", "@last", "prune"];
+    const fav = ["dup","swap","bit", "bval", "@random", "@time", "drop","out","out","out", "@last", "prune", "prune"];
     return fav[Math.floor(Math.random()*fav.length)];
   }
   // 25% chance: control / function tokens
@@ -611,7 +611,6 @@ function mutateProgram() {
       }
       for (const idx of indices) {
   	// Skip mutation if the token is @time or @random
-  	if (["@time", "@random"].includes(mut[idx])) continue;
 	let newTok;
         do {
           newTok = randToken();
