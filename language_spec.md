@@ -35,6 +35,8 @@ Truncated integer math. Division by zero yields 0.
 
 *bval* – pushes the bit counter onto the stack, and resets it.
 
+*\@last" - pops a value off the stack, uses that value as an index into the LAST-RUN output (modulused), pushes it on the stack.
+
 ### 📤 Output
 
 *out* – pop and append to output buffer. If the bit counter is > 0, will output and reset the bit counter instead.
@@ -52,6 +54,10 @@ Truncated integer math. Division by zero yields 0.
 > ifl ... end
 
 * Pops a, b; runs body if b < a (else is not supported)
+
+> prune
+
+* Pops a; if a < 64 then terminates the current thread of execution. 
 
 ### 🌿 Branching
 > branch2, branch3, branch4, branch5
@@ -79,6 +85,10 @@ Functions always reference top 3 stack values as #p1, #p2 and #p3
 
 Any control-block command can contain a label, in this format: command:label. For example, loop:mainloop.
 Labels cannot contain spaces. Labels are used for commenting and tracking purposes, especially during mutations.
+
+### Protected blocks
+
+Any instructions surrounded by \[ ... \] (with spaces) will not be modified during mutation.
 
 🛡️ Notes
 
