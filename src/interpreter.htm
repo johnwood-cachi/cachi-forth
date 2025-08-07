@@ -56,7 +56,7 @@ const STEP_MS   = 200;    // mutation cadence (adjust to taste)
 let stepCount = 0;
 let stepPeg = 0;
 let bitCounter = 0;
-let lastOutput = [];
+let outputHistory = [];
 let targetSteps = 0;
 	
 const splitTok = t => {
@@ -372,11 +372,11 @@ function runWithOutput(src, debug = false) {
 		    if (blk.type === "loop" || blk.type === "once") th.callStack.pop();
 
                     if (blk.type === "loop" && --blk.remaining > 0) {
-          						th.blockStack.push({
-							...blk,
-							idx: 0
+           					th.blockStack.push({
+						...blk,
+						idx: 0
 						});
-			    			th.callStack.push(blk.label || "LOOP"); 
+				    	th.callStack.push(blk.label || "LOOP"); 
 					} else continue;
 				} else {
 					if (th.pc >= th.tokens.length) {
@@ -415,10 +415,10 @@ function runWithOutput(src, debug = false) {
 				else if (tok === "out") {
 				  let v;
 				  if (bitCounter > 0) {
-				    v = bitCounter;
-				    bitCounter = 0;
+					v = bitCounter;
+					bitCounter = 0;
 				  } else {
-				    v = pop();
+					v = pop();
 				  }
 					out.push(v);
 					const cs = th.callStack==null ? '' : th.callStack.join("|");
@@ -479,7 +479,7 @@ function runWithOutput(src, debug = false) {
 						tokens: blk,
 						idx: 0,
 						remaining: n
-     					   }); 
+      				   }); 
 					   th.callStack.push(labTok || "LOOP"); 
 					}
 				} else {
@@ -508,26 +508,36 @@ function runWithOutput(src, debug = false) {
 			if (tok.startsWith("@")) {
                 const name = tok.slice(1);
 		  // --- Novelty Anchors ---
-		if (name === "last") {
-			const idx = pop();
-			const val = lastOutput.length ? lastOutput[Math.abs(idx)%lastOutput.length] : 0;
-			S.push(CLAMP(val));
-			continue;
-		}
-   		 if (name === "time") {
-		    S.push(CLAMP(new Date().getSeconds()) % 10);
-		    // we favor external inputs like random and time
-		    inst = inst + ANCHOR_STEPS;
-		    continue;
-		  }
-		  if (name === "random") {
-		    S.push(CLAMP(Math.floor(Math.random() * 128)));
-		    // we favor external inputs like random and time
-		    inst = inst + ANCHOR_STEPS;
-		    continue;
-		  }		
+			if (name === "last") {
+				// pop: first = which history (0 = most recent), second = index within selected history
+				const historyIndexRaw = pop();
+				const innerIndexRaw = pop();
+				let val = 0;
+				const hLen = outputHistory.length;
+				if (hLen > 0) {
+					const which = Math.abs(historyIndexRaw) % hLen;
+					const selected = outputHistory.at(-1 - which) || [];
+					if (selected.length > 0) {
+						val = selected[Math.abs(innerIndexRaw) % selected.length] ?? 0;
+					}
+				}
+				S.push(CLAMP(val));
+				continue;
+			}
+	   		 if (name === "time") {
+			    S.push(CLAMP(new Date().getSeconds()) % 10);
+			    // we favor external inputs like random and time
+			    inst = inst + ANCHOR_STEPS;
+			    continue;
+			  }
+			  if (name === "random") {
+			    S.push(CLAMP(Math.floor(Math.random() * 128)));
+			    // we favor external inputs like random and time
+			    inst = inst + ANCHOR_STEPS;
+			    continue;
+			  }		
                 if (functions[name]) {
-		  const fn = functions[name];
+			  const fn = functions[name];
                   const p1 = pop(), p2 = pop(), p3 = pop();
                   S.push(p3, p2, p1);
                   th.blockStack.push({type:"func",tokens:[...fn.body],idx:0});
@@ -578,7 +588,9 @@ frameRef.idx = start;
   updateMetricsView(len, cc, lastCount);
   drawGraph(vals, cols, tips);
     updateLabelsView();  
-	lastOutput = [...out];
+	// Append this run's output to rolling history (cap at 10, 0 = most recent)
+	outputHistory.push([...out]);
+	if (outputHistory.length > 10) outputHistory.shift();
 	return out.join(" ");
 }
 
