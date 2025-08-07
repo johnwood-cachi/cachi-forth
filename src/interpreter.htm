@@ -619,7 +619,20 @@ function mutateProgram() {
 	  if (depth) protected.add(i); // mark anything inside
 	  if (toks[i] === "]") 
 	      depth--;
-  }	
+  }
+  
+  // Build list of indices that are actually safe to mutate
+  const mutableIndices = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (!protected.has(i) && toks[i] !== "@time" && toks[i] !== "@random") {
+      mutableIndices.push(i);
+    }
+  }
+  if (mutableIndices.length === 0) {
+    alert("No mutable tokens available (all protected or special).");
+    return;
+  }
+  
   const origLen = toks.length;
   const origOut = runWithOutput(orig);
   const origStep = stepCount;
@@ -628,17 +641,17 @@ function mutateProgram() {
 
   let deltaTokens = 1;
 
-  while (deltaTokens <= toks.length) {
+  while (deltaTokens <= mutableIndices.length) {
     for (let attempt = 0; attempt < maxAttemptsPerDelta; attempt++) {
       let mut = [...toks];
       const indices = new Set();
-      while (indices.size < deltaTokens) {
-	const idx = Math.floor(Math.random()*toks.length);
-	if (protected.has(idx)) continue; // <-- NEW guard
-        indices.add(Math.floor(Math.random() * toks.length));
+      const targetCount = Math.min(deltaTokens, mutableIndices.length);
+      while (indices.size < targetCount) {
+        const idx = mutableIndices[Math.floor(Math.random() * mutableIndices.length)];
+        indices.add(idx);
       }
       for (const idx of indices) {
-  	// Skip mutation if the token is @time or @random
+    	// Skip mutation if the token is @time or @random
 	let newTok;
         do {
           newTok = randToken();
