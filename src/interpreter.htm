@@ -240,18 +240,41 @@ function drawGraph(vals, cols, titles) {
 		svg.innerHTML = "";
 		return;
 	}
-	const W = svg.clientWidth || 600,
-		H = svg.clientHeight || 120,
-		mid = H / 2,
-		step = vals.length > 1 ? W / (vals.length) : W,
-		scale = (H / 2) / 128;
-	let g = `<rect x='0' y='${mid}' width='${W}' height='1' fill='#555'/>`;
-	for (let i = 0; i < vals.length; i++) {
-		const v = isFinite(vals[i]) ? vals[i] : 0;
+
+	// Determine dynamic height from data so the graph shrinks to its content
+	const values = vals.map(v => (isFinite(v) ? v : 0));
+	const maxPos = Math.max(0, ...values.map(v => (v > 0 ? v : 0)));
+	const maxNegAbs = Math.max(0, ...values.map(v => (v < 0 ? -v : 0)));
+
+	let H, mid;
+	if (maxPos > 0 && maxNegAbs > 0) {
+		H = Math.ceil(maxPos + maxNegAbs);
+		mid = Math.ceil(maxPos);
+	} else if (maxPos > 0) {
+		H = Math.ceil(maxPos);
+		mid = H; // baseline at bottom when only positive values
+	} else if (maxNegAbs > 0) {
+		H = Math.ceil(maxNegAbs);
+		mid = 0; // baseline at top when only negative values
+	} else {
+		H = 1;
+		mid = 1;
+	}
+
+	const W = svg.clientWidth || 600;
+	const step = values.length > 1 ? W / values.length : W;
+	const scale = 1; // 1px per value unit
+
+	// Override CSS height so the SVG matches content height
+	svg.style.height = `${H}px`;
+
+	let g = `<rect x='0' y='${Math.max(0, Math.min(H - 1, mid))}' width='${W}' height='1' fill='#555'/>`;
+	for (let i = 0; i < values.length; i++) {
+		const v = values[i];
 		const h = Math.abs(v) * scale;
 		const x = i * step;
 		const y = v >= 0 ? mid - h : mid;
-		g += `<rect x='${x}' width='${Math.max(1,step-1)}' y='${y}' height='${h}' fill='${cols[i]}' title='${titles[i]}'></rect>`;
+		g += `<rect x='${x}' width='${Math.max(1, step - 1)}' y='${y}' height='${h}' fill='${cols[i]}' title='${titles[i]}'></rect>`;
 	}
 	svg.innerHTML = g;
 }
