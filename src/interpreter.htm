@@ -28,6 +28,7 @@
 &nbsp;|&nbsp;Pressure:&nbsp;<span id="pressureVal">0</span>
   &nbsp;|&nbsp;Len: &nbsp;<span id="progLen">0</span>
 &nbsp;|&nbsp;CC:&nbsp;<span id="ccVal">0</span>
+&nbsp;|&nbsp;@last:&nbsp;<span id="lastCount">0</span>
     &nbsp;|&nbsp;Steps:&nbsp;<span id="stepCount">0</span>
     &nbsp;|&nbsp;Cost:&nbsp;<span id="cost">0</span>
   </div>
@@ -146,6 +147,7 @@ function generateRandomProgram() {
 
   function getMetrics (tokenArr) {
   let cc = 1;                       // baseline path
+  let lastCount = 0;                // count of @last commands
   for (const t of tokenArr) {
     const [base] = splitTok(t);
     if (base === "loop" || base === "ifg" || base === "ifl") cc += 1;
@@ -153,17 +155,20 @@ function generateRandomProgram() {
       const n = +base[6];
       if (n >= 2 && n <= 5) cc += n - 1;  // branch2 ⇒ +1, branch3 ⇒ +2 …
     }
+    else if (base === "@last") lastCount += 1;  // count @last commands
   }
-  return { len: tokenArr.length, cc };
+  return { len: tokenArr.length, cc, lastCount };
 }
 
-function updateMetricsView (len, cc) {
+function updateMetricsView (len, cc, lastCount) {
   const lEl = document.getElementById("progLen");
   const cEl = document.getElementById("ccVal");
+  const lastEl = document.getElementById("lastCount");
   document.getElementById("stepCount").textContent = stepCount;
   document.getElementById("cost").textContent = (len * stepCount);
   if (lEl) lEl.textContent = len;
   if (cEl) cEl.textContent = cc;
+  if (lastEl) lastEl.textContent = lastCount || 0;
 }
 
 function updateMutCount () {
@@ -545,9 +550,9 @@ frameRef.idx = start;
 		}
 	}
 	document.getElementById("output").innerHTML = "Output: " + outHTML.join(" ");
-	const { len, cc } = getMetrics(tokens);
+	const { len, cc, lastCount } = getMetrics(tokens);
     stepCount = inst;
-  updateMetricsView(len, cc);
+  updateMetricsView(len, cc, lastCount);
   drawGraph(vals, cols, tips);
     updateLabelsView();  
 	lastOutput = [...out];
