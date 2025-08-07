@@ -6,7 +6,7 @@ Cachi‑Forth is a minimal, stack-based, postfix language for modeling structura
 
 Stack: Integer-only
 
-**Execution Limit:** Typically throttled to 1000 timeslice executions (to prevent halting)
+**Execution Limit:** Typically throttled to 10,000 timeslice executions (to prevent halting). During mutation will maintain the SAME steps as an execution limit.
 
 **Output:** Emitted via out, collected in output buffer
 
@@ -35,7 +35,7 @@ Truncated integer math. Division by zero yields 0.
 
 *bval* – pushes the bit counter onto the stack, and resets it.
 
-\@last* - pops a value off the stack, uses that value as an index into the LAST-RUN output (modulused), pushes it on the stack.
+*\@last* - pops a value off the stack, uses that value as an index into the LAST-RUN output (modulused), pushes it on the stack.
 
 ### 📤 Output
 
