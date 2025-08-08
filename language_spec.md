@@ -71,7 +71,7 @@ Truncated integer math. Division by zero yields 0.
 
 ### 📦 Functions
 
-> >name ... end
+\>name ... end
 
 * Define function name consisting of body ...
 
@@ -100,7 +100,7 @@ Cachi-Forth is very forgiving and will not produce runtime errors. Instruction e
 
 ## PURPOSE:
 
-This language was created to explore Algorithmic Information Theory concepts, such as Kolmogorov complexity and Solomononoff induction.
+This language was created to explore Algorithmic Information Theory concepts, such as Kolmogorov complexity and Solomonoff induction.
 In particular it was designed to model inference processes via abstractions (functions) and their (conditional) invocation and propagation
 of execution. The motivation is for it to let us model and simulate neural processing in the brain and also LLMs.
 
