@@ -59,6 +59,8 @@ let bitCounter = 0;
 let outputHistory = [];
 let outputInertia = [];
 let targetSteps = 0;
+let outputColorHistory = [];
+let outputTitleHistory = [];
 	
 const splitTok = t => {
 	if (t==null) return [ "", "" ];
@@ -254,6 +256,7 @@ function drawGraph(vals, cols, titles) {
 
 	const histories = outputHistory;
 	const inertias = outputInertia;
+  const colorHist = outputColorHistory;
 	if (!histories.length) {
 		svg.innerHTML = "";
 		svg.style.height = "0px";
@@ -279,6 +282,7 @@ function drawGraph(vals, cols, titles) {
 	for (let idx = histories.length - 1; idx >= 0; idx--) {
 		const rowVals = histories[idx] || [];
 		const inertia = inertias[idx] ?? 0;
+    const rowCols = (colorHist && colorHist[idx]) || [];
 		const rowH = heightFromInertia(inertia);
 		const n = rowVals.length;
 		if (n > 0) {
@@ -287,7 +291,8 @@ function drawGraph(vals, cols, titles) {
 				const v = rowVals[j];
 				const a = CLAMP(v) / 127; // opacity 0..1 based on clamped value
 				const x = j * step;
-				g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${rowH}' fill='#0ff' fill-opacity='${a}'></rect>`;
+                const col = rowCols[j] || '#0ff';
+                g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${rowH}' fill='${col}' fill-opacity='${a}'></rect>`;
 			}
 		}
 		y += rowH + GAP;
@@ -609,8 +614,12 @@ frameRef.idx = start;
 	// Append this run's output to rolling history (cap at 20, 0 = most recent)
  	outputHistory.push([...out]);
  	outputInertia.push(inertiaVal || 0);
+  outputColorHistory.push([...cols]);
+  outputTitleHistory.push([...tips]);
  	if (outputHistory.length > 20) outputHistory.shift();
  	if (outputInertia.length > 20) outputInertia.shift();
+  if (outputColorHistory.length > 20) outputColorHistory.shift();
+  if (outputTitleHistory.length > 20) outputTitleHistory.shift();
 	return out.join(" ");
 }
 
