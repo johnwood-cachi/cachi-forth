@@ -662,8 +662,8 @@ function mutateProgram() {
   const origLen = toks.length;
   const origOut = runWithOutput(orig);
   const origStep = stepCount;
-  const maxStepDelta = Math.ceil(origStep * 0.1); // 10% margin on steps
-  const maxAttemptsPerDelta = 100;
+  const maxStepDelta = Math.ceil(origStep * 0.05); // 5% margin on steps
+  const maxAttemptsPerDelta = 500;
 
   let deltaTokens = 1;
   let totalAttempts = 0; // count how many mutation attempts are needed until one is accepted
