@@ -62,7 +62,9 @@ let outputInertia = [];
 let targetSteps = 0;
 let outputColorHistory = [];
 let outputTitleHistory = [];
-const PERTURBATION_RUNS = 500;
+const PERTURBATION_RUNS = 100;
+const PI_TOTAL_TIMEOUT_MS = 8000; // total time cap for a full PI computation
+const PI_MIN_TRIALS = 10;         // require at least this many samples per side
 	
 const splitTok = t => {
 	if (t==null) return [ "", "" ];
@@ -799,7 +801,7 @@ function mutateProgram() {
 }
 
 // --- Perturbation Index helpers ---
-function computeSingleInertiaAttemptForCode(codeStr) {
+function computeSingleInertiaAttemptForCode(codeStr, deadlineTimeMs) {
   if (!codeStr) return null;
   const toks = codeStr.trim().split(/\s+/);
   const protectedSet = new Set();
@@ -823,9 +825,11 @@ function computeSingleInertiaAttemptForCode(codeStr) {
 
   let deltaTokens = 1;
   let totalAttempts = 0;
+  const hasDeadline = typeof deadlineTimeMs === 'number' && isFinite(deadlineTimeMs);
 
   while (deltaTokens <= mutableIndices.length) {
     for (let attempt = 0; attempt < maxAttemptsPerDelta; attempt++) {
+      if (hasDeadline && Date.now() >= deadlineTimeMs) return totalAttempts;
       const mut = [...toks];
       const indices = new Set();
       const targetCount = Math.min(deltaTokens, mutableIndices.length);
@@ -855,6 +859,7 @@ function computeSingleInertiaAttemptForCode(codeStr) {
 
       const newCode = mut.join(" ");
       totalAttempts++;
+      if (hasDeadline && Date.now() >= deadlineTimeMs) return totalAttempts;
       const newOut = runWithOutput(newCode, false, { dryRun: true });
       const newStep = stepCount;
 
@@ -871,14 +876,20 @@ function computeSingleInertiaAttemptForCode(codeStr) {
   return totalAttempts;
 }
 
-function averageInertiaForCode(codeStr, trials) {
+function averageInertiaForCode(codeStr, trials, deadlineTimeMs) {
   let sum = 0;
+  let count = 0;
+  const hasDeadline = typeof deadlineTimeMs === 'number' && isFinite(deadlineTimeMs);
   for (let i = 0; i < trials; i++) {
-    const val = computeSingleInertiaAttemptForCode(codeStr);
+    if (hasDeadline && Date.now() >= deadlineTimeMs) break;
+    const val = computeSingleInertiaAttemptForCode(codeStr, deadlineTimeMs);
     if (val == null) return null;
     sum += val;
+    count++;
   }
-  return sum / trials;
+  const minNeeded = Math.min(PI_MIN_TRIALS, trials);
+  if (count < minNeeded) return null;
+  return sum / count;
 }
 
 function computePerturbationIndex() {
@@ -923,19 +934,27 @@ function computePerturbationIndex() {
     return;
   }
 
-  const avg1 = averageInertiaForCode(bracketSelection, PERTURBATION_RUNS);
-  const avg2 = averageInertiaForCode(bracketOthers, PERTURBATION_RUNS);
+  // Compute with an overall time budget, splitting evenly between the two averages
+  const now = Date.now();
+  const totalDeadline = now + PI_TOTAL_TIMEOUT_MS;
+  const firstDeadline = now + Math.floor(PI_TOTAL_TIMEOUT_MS / 2);
+
+  const avg1 = averageInertiaForCode(bracketSelection, PERTURBATION_RUNS, firstDeadline);
+  const avg2 = averageInertiaForCode(bracketOthers, PERTURBATION_RUNS, totalDeadline);
 
   // Restore globals
   stepCount = prevStepCount;
   targetSteps = prevTargetSteps;
 
   if (avg1 == null || avg2 == null) {
-    alert('Unable to compute perturbation index due to lack of mutable tokens.');
+    alert('Perturbation Index computation timed out or lacked mutable tokens. Try a smaller selection or shorter program.');
+    // Restore original text and selection
+    ta.value = originalText;
+    try { ta.setSelectionRange(selStart, selEnd); } catch(e) {}
     return;
   }
   const ratio = avg1 / avg2;
-  alert(`Perturbation Index (selection protected vs others protected): ${ratio.toFixed(3)}\navg1=${avg1.toFixed(2)}, avg2=${avg2.toFixed(2)}, runs=${PERTURBATION_RUNS}`);
+  alert(`Perturbation Index (selection protected vs others protected): ${ratio.toFixed(3)}\navg1=${avg1.toFixed(2)}, avg2=${avg2.toFixed(2)}, runs≈${PERTURBATION_RUNS}`);
 
   // Restore original text and selection
   ta.value = originalText;
