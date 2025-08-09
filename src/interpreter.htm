@@ -328,14 +328,17 @@ function collectSeed(frame) {
 
 
 /******************** INTERPRETER *********************/
-function runWithOutput(src, debug = false) {
+function runWithOutput(src, debug = false, opts = {}) {
+	const dryRun = opts && opts.dryRun === true;
 	const tokens = src.trim().split(/\s+/);
-	// refresh LABELS: default everything to –1
-	for (const k in LABELS) LABELS[k] = -1;
-	tokens.forEach((t, i) => {
-	  const [, lab] = splitTok(t);
-	  if (lab) LABELS[lab] = i;          // absolute offset in original token list
-	});
+	// refresh LABELS: default everything to –1 (skip during dry runs)
+	if (!dryRun) {
+		for (const k in LABELS) LABELS[k] = -1;
+		tokens.forEach((t, i) => {
+		  const [, lab] = splitTok(t);
+		  if (lab) LABELS[lab] = i;          // absolute offset in original token list
+		});
+	}
     let thisStep = 0;
 	const functions = {};
 	const main = parseDefs(tokens, functions);
@@ -605,21 +608,23 @@ frameRef.idx = start;
 			if (!isNaN(num)) S.push(CLAMP(num));
 		}
 	}
-	document.getElementById("output").innerHTML = "Output: " + outHTML.join(" ");
+		if (!dryRun) document.getElementById("output").innerHTML = "Output: " + outHTML.join(" ");
 	const { len, cc, lastCount } = getMetrics(tokens);
     stepCount = inst;
-  updateMetricsView(len, cc, lastCount);
-  drawGraph(vals, cols, tips);
-    updateLabelsView();  
+  if (!dryRun) updateMetricsView(len, cc, lastCount);
+  if (!dryRun) drawGraph(vals, cols, tips);
+  if (!dryRun) updateLabelsView();  
 	// Append this run's output to rolling history (cap at 20, 0 = most recent)
+  if (!dryRun) {
  	outputHistory.push([...out]);
  	outputInertia.push(inertiaVal || 0);
   outputColorHistory.push([...cols]);
   outputTitleHistory.push([...tips]);
  	if (outputHistory.length > 20) outputHistory.shift();
  	if (outputInertia.length > 20) outputInertia.shift();
-  if (outputColorHistory.length > 20) outputColorHistory.shift();
-  if (outputTitleHistory.length > 20) outputTitleHistory.shift();
+    if (outputColorHistory.length > 20) outputColorHistory.shift();
+    if (outputTitleHistory.length > 20) outputTitleHistory.shift();
+  }
 	return out.join(" ");
 }
 
@@ -675,7 +680,7 @@ function mutateProgram() {
   }
   
   const origLen = toks.length;
-  const origOut = runWithOutput(orig);
+  const origOut = runWithOutput(orig, false, {dryRun:true});
   const origStep = stepCount;
   const maxStepDelta = Math.ceil(origStep * 0.05); // 5% margin on steps
   const maxAttemptsPerDelta = 500;
@@ -716,7 +721,7 @@ function mutateProgram() {
       const newCode = mut.join(" ");
       totalAttempts++;
       inertiaVal = totalAttempts;
-      const newOut = runWithOutput(newCode);
+      const newOut = runWithOutput(newCode, false, {dryRun:true});
       const newStep = stepCount;
  
       if (
