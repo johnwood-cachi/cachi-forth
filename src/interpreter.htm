@@ -22,7 +22,8 @@
   <button onclick="saveProgram()">Save</button>
   <button onclick="mutateProgram()">Mutate</button>
   <button onclick="clearSavedPrograms()">Clear</button>
-<button id="autoBtn" onclick="toggleAuto()">Start</button>
+  <button id="autoBtn" onclick="toggleAuto()">Start</button>
+  <button onclick="computePerturbationIndex()">Perturbation Index</button>
   <div style='margin-bottom: 10px;'>
 &nbsp;Generation: <span id="mutCount">0</span>
 &nbsp;|&nbsp;Inertia:&nbsp;<span id="inertiaVal">0</span>
@@ -61,6 +62,7 @@ let outputInertia = [];
 let targetSteps = 0;
 let outputColorHistory = [];
 let outputTitleHistory = [];
+const PERTURBATION_RUNS = 500;
 	
 const splitTok = t => {
 	if (t==null) return [ "", "" ];
@@ -398,7 +400,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 		    if (blk.type === "loop" || blk.type === "once") th.callStack.pop();
 
                     if (blk.type === "loop" && --blk.remaining > 0) {
-            			th.blockStack.push({
+            		th.blockStack.push({
 						...blk,
 						idx: 0
 						});
@@ -750,6 +752,150 @@ function mutateProgram() {
   updateInertia();
 
   alert("No acceptable mutation found within constraints.");
+}
+
+// --- Perturbation Index helpers ---
+function computeSingleInertiaAttemptForCode(codeStr) {
+  if (!codeStr) return null;
+  const toks = codeStr.trim().split(/\s+/);
+  const protectedSet = new Set();
+  let depth = 0;
+  for (let i = 0; i < toks.length; i++) {
+    if (toks[i] === "[") depth++;
+    if (depth) protectedSet.add(i);
+    if (toks[i] === "]") depth--;
+  }
+  const mutableIndices = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (!protectedSet.has(i)) mutableIndices.push(i);
+  }
+  if (mutableIndices.length === 0) return null;
+
+  const origLen = toks.length;
+  const origOut = runWithOutput(codeStr, false, { dryRun: true });
+  const origStep = stepCount;
+  const maxStepDelta = Math.ceil(origStep * 0.05);
+  const maxAttemptsPerDelta = 500;
+
+  let deltaTokens = 1;
+  let totalAttempts = 0;
+
+  while (deltaTokens <= mutableIndices.length) {
+    for (let attempt = 0; attempt < maxAttemptsPerDelta; attempt++) {
+      const mut = [...toks];
+      const indices = new Set();
+      const targetCount = Math.min(deltaTokens, mutableIndices.length);
+      while (indices.size < targetCount) {
+        const idx = mutableIndices[Math.floor(Math.random() * mutableIndices.length)];
+        indices.add(idx);
+      }
+      let involvesCommand = false;
+      for (const idx of indices) {
+        let newTok;
+        const oldTok = mut[idx];
+        do {
+          newTok = randToken();
+        } while (newTok === oldTok);
+        if (isCommandToken(oldTok) || isCommandToken(newTok)) involvesCommand = true;
+        mut[idx] = newTok;
+      }
+      if (!involvesCommand) {
+        const forceIdx = Array.from(indices)[Math.floor(Math.random() * indices.size)];
+        let forced;
+        do {
+          forced = randNonNumberToken();
+        } while (forced === toks[forceIdx]);
+        mut[forceIdx] = forced;
+        involvesCommand = true;
+      }
+
+      const newCode = mut.join(" ");
+      totalAttempts++;
+      const newOut = runWithOutput(newCode, false, { dryRun: true });
+      const newStep = stepCount;
+
+      if (
+        Math.abs(newStep - (targetSteps==0 ? origStep : targetSteps)) <= maxStepDelta &&
+        newOut !== origOut &&
+        mut.length === origLen
+      ) {
+        return totalAttempts;
+      }
+    }
+    deltaTokens++;
+  }
+  return totalAttempts;
+}
+
+function averageInertiaForCode(codeStr, trials) {
+  let sum = 0;
+  for (let i = 0; i < trials; i++) {
+    const val = computeSingleInertiaAttemptForCode(codeStr);
+    if (val == null) return null;
+    sum += val;
+  }
+  return sum / trials;
+}
+
+function computePerturbationIndex() {
+  const ta = document.getElementById('program');
+  const originalText = ta.value;
+  const selStart = ta.selectionStart;
+  const selEnd = ta.selectionEnd;
+  if (selStart == null || selEnd == null || selStart === selEnd) {
+    alert('Select part of the program text first.');
+    return;
+  }
+
+  const before = originalText.slice(0, selStart);
+  const selected = originalText.slice(selStart, selEnd);
+  const after = originalText.slice(selEnd);
+
+  const bracketSelection = `${before} [ ${selected} ] ${after}`;
+  const bracketOthers = `[ ${before} ] ${selected} [ ${after} ]`;
+
+  // Save volatile globals that dry runs may change
+  const prevStepCount = stepCount;
+  const prevTargetSteps = targetSteps;
+
+  // Validate mutability in both scenarios
+  function hasMutable(codeStr) {
+    const toks = codeStr.trim().split(/\s+/);
+    const prot = new Set();
+    let d = 0;
+    for (let i = 0; i < toks.length; i++) { if (toks[i] === "[") d++; if (d) prot.add(i); if (toks[i] === "]") d--; }
+    for (let i = 0; i < toks.length; i++) { if (!prot.has(i)) return true; }
+    return false;
+  }
+
+  if (!hasMutable(bracketSelection)) {
+    alert('When protecting the selection, no tokens remain mutable. Choose a smaller selection.');
+    stepCount = prevStepCount; targetSteps = prevTargetSteps; 
+    return;
+  }
+  if (!hasMutable(bracketOthers)) {
+    alert('When protecting the non-selection, no tokens remain mutable. Choose a larger selection.');
+    stepCount = prevStepCount; targetSteps = prevTargetSteps; 
+    return;
+  }
+
+  const avg1 = averageInertiaForCode(bracketSelection, PERTURBATION_RUNS);
+  const avg2 = averageInertiaForCode(bracketOthers, PERTURBATION_RUNS);
+
+  // Restore globals
+  stepCount = prevStepCount;
+  targetSteps = prevTargetSteps;
+
+  if (avg1 == null || avg2 == null) {
+    alert('Unable to compute perturbation index due to lack of mutable tokens.');
+    return;
+  }
+  const ratio = avg1 / avg2;
+  alert(`Perturbation Index (selection protected vs others protected): ${ratio.toFixed(3)}\navg1=${avg1.toFixed(2)}, avg2=${avg2.toFixed(2)}, runs=${PERTURBATION_RUNS}`);
+
+  // Restore original text and selection
+  ta.value = originalText;
+  try { ta.setSelectionRange(selStart, selEnd); } catch(e) {}
 }
 
 
