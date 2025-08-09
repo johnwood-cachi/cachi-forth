@@ -177,7 +177,7 @@ function updateMutCount () {
 }
 
 let pressureVal = 0;                // last-measured stability pressure
-const PRESS_WINDOW = 20;        // size of the rolling window
+const PRESS_WINDOW = 10;        // size of the rolling window (last ~10 values)
 let   pressureHist = [];        // holds the most-recent values
 	
 function updatePressure () {        // refresh the UI
@@ -589,16 +589,8 @@ frameRef.idx = start;
   drawGraph(vals, cols, tips);
     updateLabelsView();  
 	// Append this run's output to rolling history (cap at 10, 0 = most recent)
-	// Compute and record stability pressure as Levenshtein distance from previous output
-	const prevOutArr = outputHistory.at(-1) || [];
-	const prevOutStr = Array.isArray(prevOutArr) ? prevOutArr.join(" ") : String(prevOutArr ?? "");
-	const currOutStr = out.join(" ");
-	pressureVal = levenshtein(prevOutStr, currOutStr);
-	pressureHist.push(pressureVal);
-	if (pressureHist.length > PRESS_WINDOW) pressureHist.shift();
-	updatePressure();
-	outputHistory.push([...out]);
-	if (outputHistory.length > 10) outputHistory.shift();
+  	outputHistory.push([...out]);
+  	if (outputHistory.length > 10) outputHistory.shift();
 	return out.join(" ");
 }
 
@@ -660,6 +652,7 @@ function mutateProgram() {
   const maxAttemptsPerDelta = 100;
 
   let deltaTokens = 1;
+  let totalAttempts = 0; // count how many mutation attempts are needed until one is accepted
 
   while (deltaTokens <= mutableIndices.length) {
     for (let attempt = 0; attempt < maxAttemptsPerDelta; attempt++) {
@@ -679,6 +672,7 @@ function mutateProgram() {
       }
 
       const newCode = mut.join(" ");
+      totalAttempts++;
       const newOut = runWithOutput(newCode);
       const newStep = stepCount;
  
@@ -687,6 +681,12 @@ function mutateProgram() {
         newOut !== origOut &&
         mut.length === origLen
       ) {
+        // Record pressure as attempts needed until an accepted mutation
+        pressureVal = totalAttempts;
+        pressureHist.push(pressureVal);
+        if (pressureHist.length > PRESS_WINDOW) pressureHist.shift();
+        updatePressure();
+
         document.getElementById("program").value = newCode;
         runProgram();
         return;
@@ -694,6 +694,12 @@ function mutateProgram() {
     }
     deltaTokens++;
   }
+
+  // No acceptable mutation found: record the pressure as total attempts tried
+  pressureVal = totalAttempts;
+  pressureHist.push(pressureVal);
+  if (pressureHist.length > PRESS_WINDOW) pressureHist.shift();
+  updatePressure();
 
   alert("No acceptable mutation found within constraints.");
 }
