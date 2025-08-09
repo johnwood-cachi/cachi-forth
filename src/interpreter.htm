@@ -25,7 +25,7 @@
 <button id="autoBtn" onclick="toggleAuto()">Start</button>
   <div style='margin-bottom: 10px;'>
 &nbsp;Generation: <span id="mutCount">0</span>
-&nbsp;|&nbsp;Pressure:&nbsp;<span id="pressureVal">0</span>
+&nbsp;|&nbsp;Inertia:&nbsp;<span id="inertiaVal">0</span>
   &nbsp;|&nbsp;Len: &nbsp;<span id="progLen">0</span>
 &nbsp;|&nbsp;CC:&nbsp;<span id="ccVal">0</span>
 &nbsp;|&nbsp;@last:&nbsp;<span id="lastCount">0</span>
@@ -140,9 +140,9 @@ function randToken(valid = funcNames){
 function generateRandomProgram() {
 	mutCount = 0;
 	updateMutCount();
-	pressureVal = 0;
-	pressureHist = [];
-	updatePressure();
+	inertiaVal = 0;
+	inertiaHist = [];
+	updateInertia();
 	if (autoTimer) toggleAuto();   // ensure auto-evolve halts on Clear
 
 	const tot = 50,
@@ -190,17 +190,17 @@ function updateMutCount () {
   if (el) el.textContent = mutCount;
 }
 
-let pressureVal = 0;                // last-measured stability pressure
-const PRESS_WINDOW = 10;        // size of the rolling window (last ~10 values)
-let   pressureHist = [];        // holds the most-recent values
+let inertiaVal = 0;                // last-measured inertia (resistance to change)
+const INERTIA_WINDOW = 20;        // size of the rolling window (last ~20 values)
+let   inertiaHist = [];        // holds the most-recent values
 	
-function updatePressure () {        // refresh the UI
+function updateInertia () {        // refresh the UI
   // compute mean of the window (default 0 if empty)
-  const mean = pressureHist.length
-        ? pressureHist.reduce((s,v) => s + v, 0) / pressureHist.length
+  const mean = inertiaHist.length
+        ? inertiaHist.reduce((s,v) => s + v, 0) / inertiaHist.length
         : 0;
 
-  const el = document.getElementById("pressureVal");
+  const el = document.getElementById("inertiaVal");
   if (el) el.textContent = mean.toFixed(1);      // one-decimal display
 }
 
@@ -386,11 +386,11 @@ function runWithOutput(src, debug = false) {
 		    if (blk.type === "loop" || blk.type === "once") th.callStack.pop();
 
                     if (blk.type === "loop" && --blk.remaining > 0) {
-           					th.blockStack.push({
+            			th.blockStack.push({
 						...blk,
 						idx: 0
 						});
-				    	th.callStack.push(blk.label || "LOOP"); 
+						th.callStack.push(blk.label || "LOOP"); 
 					} else continue;
 				} else {
 					if (th.pc >= th.tokens.length) {
@@ -493,7 +493,7 @@ function runWithOutput(src, debug = false) {
 						tokens: blk,
 						idx: 0,
 						remaining: n
-      				   }); 
+		   		   }); 
 					   th.callStack.push(labTok || "LOOP"); 
 					}
 				} else {
@@ -505,7 +505,7 @@ function runWithOutput(src, debug = false) {
 						type: "once",
 						tokens: blk,
 						idx: 0
-	  					}); 
+		  				}); 
 						th.callStack.push(labTok || tok.toUpperCase()); 
 					}
 				}
@@ -538,7 +538,7 @@ function runWithOutput(src, debug = false) {
 				S.push(CLAMP(val));
 				continue;
 			}
-	   		 if (name === "time") {
+		    	 if (name === "time") {
 			    S.push(CLAMP(new Date().getSeconds()) % 10);
 			    // we favor external inputs like random and time
 			    inst = inst + ANCHOR_STEPS;
@@ -563,8 +563,8 @@ function runWithOutput(src, debug = false) {
 
 			if (tok.startsWith("branch") && tok.length === 7) {
 				const N = +tok[6];
-      				if (N >= 2 && N <= 5) {
-      					const seeds = [];
+       			if (N >= 2 && N <= 5) {
+       				const seeds = [];
                       const seedStartIndex = frameRef.idx;
                       
                   for (let i = 0; i < N; i++) {
@@ -586,11 +586,11 @@ frameRef.idx = start;
                     }
 
                   
-					threads.splice(tid, 1);
-					tid--;
-				}
-				continue;
+				threads.splice(tid, 1);
+				tid--;
 			}
+			continue;
+		}
 
 			const num = parseInt(tok, 10);
 			if (!isNaN(num)) S.push(CLAMP(num));
@@ -603,8 +603,8 @@ frameRef.idx = start;
   drawGraph(vals, cols, tips);
     updateLabelsView();  
 	// Append this run's output to rolling history (cap at 10, 0 = most recent)
-  	outputHistory.push([...out]);
-  	if (outputHistory.length > 10) outputHistory.shift();
+ 	outputHistory.push([...out]);
+ 	if (outputHistory.length > 10) outputHistory.shift();
 	return out.join(" ");
 }
 
@@ -708,11 +708,11 @@ function mutateProgram() {
         newOut !== origOut &&
         mut.length === origLen
       ) {
-        // Record pressure as attempts needed until an accepted mutation
-        pressureVal = totalAttempts;
-        pressureHist.push(pressureVal);
-        if (pressureHist.length > PRESS_WINDOW) pressureHist.shift();
-        updatePressure();
+        // Record inertia as attempts needed until an accepted mutation
+        inertiaVal = totalAttempts;
+        inertiaHist.push(inertiaVal);
+        if (inertiaHist.length > INERTIA_WINDOW) inertiaHist.shift();
+        updateInertia();
 
         document.getElementById("program").value = newCode;
         runProgram();
@@ -722,11 +722,11 @@ function mutateProgram() {
     deltaTokens++;
   }
 
-  // No acceptable mutation found: record the pressure as total attempts tried
-  pressureVal = totalAttempts;
-  pressureHist.push(pressureVal);
-  if (pressureHist.length > PRESS_WINDOW) pressureHist.shift();
-  updatePressure();
+  // No acceptable mutation found: record the inertia as total attempts tried
+  inertiaVal = totalAttempts;
+  inertiaHist.push(inertiaVal);
+  if (inertiaHist.length > INERTIA_WINDOW) inertiaHist.shift();
+  updateInertia();
 
   alert("No acceptable mutation found within constraints.");
 }
