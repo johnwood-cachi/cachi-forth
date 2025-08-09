@@ -65,6 +65,20 @@ const splitTok = t => {
   return idx === -1 ? [t, null] : [t.slice(0, idx), t.slice(idx + 1)];
 };
 
+// Helpers to classify tokens and generate command tokens
+const isNumberToken = (tok) => {
+  const [base] = splitTok(tok);
+  return /^-?\d+$/.test(base);
+};
+const isCommandToken = (tok) => !isNumberToken(tok);
+function randNonNumberToken(valid = funcNames) {
+  let t;
+  do {
+    t = randToken(valid);
+  } while (isNumberToken(t));
+  return t;
+}
+
 const isControl = (tok) => {
   const [b] = splitTok(tok);
   return b === "loop" || b === "ifg" || b === "ifl" ||
@@ -663,12 +677,25 @@ function mutateProgram() {
         const idx = mutableIndices[Math.floor(Math.random() * mutableIndices.length)];
         indices.add(idx);
       }
+      let involvesCommand = false;
       for (const idx of indices) {
 	let newTok;
+        let oldTok = mut[idx];
         do {
           newTok = randToken();
-        } while (newTok === mut[idx]);
+        } while (newTok === oldTok);
+        if (isCommandToken(oldTok) || isCommandToken(newTok)) involvesCommand = true;
         mut[idx] = newTok;
+      }
+      // Ensure at least one mutated position involves a command
+      if (!involvesCommand) {
+        const forceIdx = Array.from(indices)[Math.floor(Math.random() * indices.size)];
+        let forced;
+        do {
+          forced = randNonNumberToken();
+        } while (forced === toks[forceIdx]);
+        mut[forceIdx] = forced;
+        involvesCommand = true;
       }
 
       const newCode = mut.join(" ");
