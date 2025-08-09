@@ -57,6 +57,7 @@ let stepCount = 0;
 let stepPeg = 0;
 let bitCounter = 0;
 let outputHistory = [];
+let outputInertia = [];
 let targetSteps = 0;
 	
 const splitTok = t => {
@@ -250,46 +251,49 @@ function updateLabelsView () {
 function drawGraph(vals, cols, titles) {
 	const svg = document.getElementById("graph");
 	if (!svg) return;
-	if (!vals.length) {
+
+	const histories = outputHistory;
+	const inertias = outputInertia;
+	if (!histories.length) {
 		svg.innerHTML = "";
+		svg.style.height = "0px";
 		return;
 	}
 
-	// Determine dynamic height from data so the graph shrinks to its content
-	const values = vals.map(v => (isFinite(v) ? v : 0));
-	const maxPos = Math.max(0, ...values.map(v => (v > 0 ? v : 0)));
-	const maxNegAbs = Math.max(0, ...values.map(v => (v < 0 ? -v : 0)));
-
-	let H, mid;
-	if (maxPos > 0 && maxNegAbs > 0) {
-		H = Math.ceil(maxPos + maxNegAbs);
-		mid = Math.ceil(maxPos);
-	} else if (maxPos > 0) {
-		H = Math.ceil(maxPos);
-		mid = H; // baseline at bottom when only positive values
-	} else if (maxNegAbs > 0) {
-		H = Math.ceil(maxNegAbs);
-		mid = 0; // baseline at top when only negative values
-	} else {
-		H = 1;
-		mid = 1;
-	}
-
 	const W = svg.clientWidth || 600;
-	const step = values.length > 1 ? W / values.length : W;
-	const scale = 1; // 1px per value unit
+	const BASE_H = 30;     // height for inertia in [1..10]
+	const MIN_H  = 5;      // minimum row height for very high inertia
+	const GAP    = 1;      // gap between rows
+	const TAU    = 40;     // decay constant controlling how fast height shrinks
 
-	// Override CSS height so the SVG matches content height
-	svg.style.height = `${H}px`;
-
-	let g = `<rect x='0' y='${Math.max(0, Math.min(H - 1, mid))}' width='${W}' height='1' fill='#555'/>`;
-	for (let i = 0; i < values.length; i++) {
-		const v = values[i];
-		const h = Math.abs(v) * scale;
-		const x = i * step;
-		const y = v >= 0 ? mid - h : mid;
-		g += `<rect x='${x}' width='${Math.max(1, step - 1)}' y='${y}' height='${h}' fill='${cols[i]}' title='${titles[i]}'></rect>`;
+	function heightFromInertia(inertia) {
+		if (!inertia || inertia <= 10) return BASE_H;
+		if (inertia >= 150) return MIN_H;
+		const decay = Math.exp(-(inertia - 10) / TAU);
+		return Math.max(MIN_H, MIN_H + (BASE_H - MIN_H) * decay);
 	}
+
+	let y = 0;
+	let g = "";
+	// Draw newest at the top, older moving down
+	for (let idx = histories.length - 1; idx >= 0; idx--) {
+		const rowVals = histories[idx] || [];
+		const inertia = inertias[idx] ?? 0;
+		const rowH = heightFromInertia(inertia);
+		const n = rowVals.length;
+		if (n > 0) {
+			const step = n > 0 ? W / n : W;
+			for (let j = 0; j < n; j++) {
+				const v = rowVals[j];
+				const a = CLAMP(v) / 127; // opacity 0..1 based on clamped value
+				const x = j * step;
+				g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${rowH}' fill='#0ff' fill-opacity='${a}'></rect>`;
+			}
+		}
+		y += rowH + GAP;
+	}
+
+	svg.style.height = `${Math.ceil(y)}px`;
 	svg.innerHTML = g;
 }
 
@@ -602,9 +606,11 @@ frameRef.idx = start;
   updateMetricsView(len, cc, lastCount);
   drawGraph(vals, cols, tips);
     updateLabelsView();  
-	// Append this run's output to rolling history (cap at 10, 0 = most recent)
+	// Append this run's output to rolling history (cap at 20, 0 = most recent)
  	outputHistory.push([...out]);
- 	if (outputHistory.length > 10) outputHistory.shift();
+ 	outputInertia.push(inertiaVal || 0);
+ 	if (outputHistory.length > 20) outputHistory.shift();
+ 	if (outputInertia.length > 20) outputInertia.shift();
 	return out.join(" ");
 }
 
@@ -700,6 +706,7 @@ function mutateProgram() {
 
       const newCode = mut.join(" ");
       totalAttempts++;
+      inertiaVal = totalAttempts;
       const newOut = runWithOutput(newCode);
       const newStep = stepCount;
  

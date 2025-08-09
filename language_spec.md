@@ -35,7 +35,7 @@ Truncated integer math. Division by zero yields 0.
 
 *bval* – pushes the bit counter onto the stack, and resets it.
 
-*\@last* - pops TWO values. First pop selects which history buffer to use (0 = most recent, 1 = previous, etc.) from a rolling history of the last 10 runs; second pop selects the index within that selected output (both indices are absoluted and modulused). Pushes the retrieved value (or 0 if missing) onto the stack.
+*\@last* - pops TWO values. First pop selects which history buffer to use (0 = most recent, 1 = previous, etc.) from a rolling history of the last 20 runs; second pop selects the index within that selected output (both indices are absoluted and modulused). Pushes the retrieved value (or 0 if missing) onto the stack.
 
 ### 📤 Output
 
