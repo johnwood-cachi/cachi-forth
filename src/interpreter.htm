@@ -360,25 +360,69 @@ function runWithOutput(src, debug = false, opts = {}) {
 	const palette = ["#ff0", "#f0f", "#0ff", "#f80", "#0f0", "#08f", "#f44", "#fff", "#ccc", "#faa"];
 
 	function parseDefs(tok, table) {
-		const body = [];
-		for (let i = 0; i < tok.length;) {
-			const tk = tok[i++];
-			if (tk && tk.startsWith(">")) {
-				const raw = tk.slice(1); // strip '>'
-				const [name, lab] = splitTok(raw);
-				const blk = [];
-				let d = 1;
-				while (i < tok.length && d) {
-					const t = tok[i++];
-					if (t === `>${name}`) d++;
-					else if (t === "end") d--;
-					if (d) blk.push(t);
-				}
-				table[name] = { body: blk, label: lab };
-			} else body.push(tk);
-		}
-		return body;
-	}
+    const body = [];
+    let currentName = null;
+    let currentLabel = null;
+    let currentBody = [];
+    let controlDepth = 0; // depth of nested control blocks inside a function
+
+    for (let i = 0; i < tok.length; i++) {
+        const tk = tok[i];
+        if (!tk) continue;
+
+        // New function declaration starts: implicit END of previous function (if any)
+        if (tk.startsWith(">")) {
+            const raw = tk.slice(1);
+            const [name, lab] = splitTok(raw);
+            if (currentName !== null) {
+                table[currentName] = { body: currentBody, label: currentLabel };
+            }
+            currentName = name;
+            currentLabel = lab;
+            currentBody = [];
+            controlDepth = 0;
+            continue;
+        }
+
+        const [base] = splitTok(tk);
+
+        if (currentName !== null) {
+            // We are inside a function body
+            if (base === "loop" || base === "ifg" || base === "ifl") {
+                currentBody.push(tk);
+                controlDepth += 1;
+                continue;
+            }
+            if (tk === "end") {
+                if (controlDepth > 0) {
+                    // close an inner control block, not the function
+                    currentBody.push(tk);
+                    controlDepth -= 1;
+                } else {
+                    // close the function body
+                    table[currentName] = { body: currentBody, label: currentLabel };
+                    currentName = null;
+                    currentLabel = null;
+                    currentBody = [];
+                    controlDepth = 0;
+                }
+                continue;
+            }
+            // any other token is part of the current function body
+            currentBody.push(tk);
+        } else {
+            // Not inside a function: token belongs to main body
+            body.push(tk);
+        }
+    }
+
+    // If file ends while inside a function, implicitly close it
+    if (currentName !== null) {
+        table[currentName] = { body: currentBody, label: currentLabel };
+    }
+
+    return body;
+}
 
 	let inst = 0;
 	while (threads.length && inst < MAX_INST) {
