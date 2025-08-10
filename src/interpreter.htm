@@ -24,6 +24,7 @@
   <button onclick="clearSavedPrograms()">Clear</button>
   <button id="autoBtn" onclick="toggleAuto()">Start</button>
   <button onclick="computePerturbationIndex()">Perturbation Index</button>
+  <button onclick="computeSelectedCost()">Calc Cost</button>
   <div style='margin-bottom: 10px;'>
 &nbsp;Generation: <span id="mutCount">0</span>
 &nbsp;|&nbsp;Inertia:&nbsp;<span id="inertiaVal">0</span>
@@ -959,6 +960,78 @@ function computePerturbationIndex() {
   // Restore original text and selection
   ta.value = originalText;
   try { ta.setSelectionRange(selStart, selEnd); } catch(e) {}
+}
+
+function computeSelectedCost() {
+  const ta = document.getElementById('program');
+  const originalText = ta.value;
+  const selStart = ta.selectionStart;
+  const selEnd = ta.selectionEnd;
+  if (selStart == null || selEnd == null || selStart === selEnd) {
+    alert('Select part of the program text first.');
+    return;
+  }
+
+  const prevStepCount = stepCount;
+  const prevTargetSteps = targetSteps;
+  const prevBitCounter = bitCounter;
+
+  const countTokens = (text) => {
+    const trimmed = text.trim();
+    if (!trimmed) return 0;
+    return trimmed.split(/\s+/).length;
+  };
+
+  const replaceTokensWithNopInRange = (text, start, end) => {
+    const re = /\S+/g;
+    let out = '';
+    let last = 0;
+    let replaced = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const s = m.index;
+      const e = s + m[0].length;
+      const overlaps = s < end && e > start;
+      if (overlaps) {
+        out += text.slice(last, s) + 'nop';
+        last = e;
+        replaced++;
+      }
+    }
+    out += text.slice(last);
+    return { text: out, replacedCount: replaced };
+  };
+
+  // Total cost (original)
+  runWithOutput(originalText, false, { dryRun: true });
+  const totalSteps = stepCount;
+  const totalLen = countTokens(originalText);
+  const totalCost = totalLen * totalSteps;
+
+  // NOP-replaced selection cost
+  const { text: noppedText, replacedCount } = replaceTokensWithNopInRange(originalText, selStart, selEnd);
+  if (replacedCount === 0) {
+    stepCount = prevStepCount; targetSteps = prevTargetSteps; bitCounter = prevBitCounter;
+    alert('No whole tokens found in the selection.');
+    return;
+  }
+  runWithOutput(noppedText, false, { dryRun: true });
+  const noppedSteps = stepCount;
+  const noppedLen = countTokens(noppedText);
+  const noppedCost = noppedLen * noppedSteps;
+
+  // Restore globals possibly touched by dry runs
+  stepCount = prevStepCount;
+  targetSteps = prevTargetSteps;
+  bitCounter = prevBitCounter;
+
+  if (totalCost <= 0) {
+    alert('0.00%');
+    return;
+  }
+  const selectionCost = totalCost - noppedCost;
+  const percent = (selectionCost / totalCost) * 100;
+  alert(percent.toFixed(2) + '%');
 }
 
 
