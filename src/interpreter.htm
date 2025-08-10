@@ -686,12 +686,34 @@ function runProgram(d = false) {
 }
 
 function saveProgram() {
-	const c = document.getElementById("program").value;
-	savedPrograms.push(c);
-	const d = document.createElement("div");
-	d.className = "saved-entry";
-	d.textContent = c;
-	document.getElementById("savedList").prepend(d);
+	const c = document.getElementById("program").value.trim();
+	const url = new URL(window.location.href);
+	url.search = ""; // remove existing query
+	url.hash = "";   // remove hash
+	url.searchParams.set("cost", c); // URLSearchParams handles encoding
+	const urlStr = url.toString();
+
+	function fallbackCopy() {
+		try {
+			const ta = document.createElement("textarea");
+			ta.value = urlStr;
+			document.body.appendChild(ta);
+			ta.select();
+			document.execCommand("copy");
+			document.body.removeChild(ta);
+			alert("Shareable link copied to clipboard.");
+		} catch (e) {
+			prompt("Copy this URL:", urlStr);
+		}
+	}
+
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(urlStr)
+			.then(() => alert("Shareable link copied to clipboard."))
+			.catch(() => fallbackCopy());
+	} else {
+		fallbackCopy();
+	}
 }
 
 function clearSavedPrograms() {
@@ -1036,9 +1058,10 @@ function computeSelectedCost() {
 
 
 window.onload = () => {
-	const q = new URLSearchParams(location.search).get("code");
-	if (q) {
-		document.getElementById("program").value = decodeURIComponent(q);
+	const sp = new URLSearchParams(location.search);
+	const raw = sp.get("cost") || sp.get("code");
+	if (raw) {
+		document.getElementById("program").value = raw;
 		setTimeout(runProgram, 0);
 	}
 	updateMutCount();   // initialise counter to 0 on first load
