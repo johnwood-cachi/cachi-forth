@@ -59,6 +59,10 @@ Truncated integer math. Division by zero yields 0.
 
 * Pops a; if a < 64 then terminates the current thread of execution. 
 
+> nop
+
+* Does nothing. Will not be generated as a random token.
+
 ### 🌿 Branching
 > branch2, branch3, branch4, branch5
 * Forks parallel threads using next 2–5 tokens as branch seeds (if seed starts with a control block, the entire block up to 'end' will be considered 1 seed token)
@@ -80,6 +84,8 @@ Functions always reference top 3 stack values as #p1, #p2 and #p3
 * Invoked via @name (if function does not exist, it is ignored)
 
 * Function body can invoke other functions, including itself recursively
+
+* If another function definition is met in body, it will be considered an implicit "end" statement.
 
 ### Labels
 
