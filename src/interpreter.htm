@@ -978,7 +978,7 @@ function computePerturbationIndex() {
   }
 
   const avgCost = sumCost / PERTURBATION_RUNS;
-  const percent = 100 - (originalCost > 0 ? (avgCost / originalCost) * 100 : 0);
+  const percent = (originalCost > 0 ? (avgCost / originalCost) * 100 : 0) - 100;
   const delta = avgCost - originalCost;
 
   // Restore globals possibly touched by dry runs
