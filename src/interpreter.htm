@@ -23,7 +23,7 @@
   <button onclick="mutateProgram()">Mutate</button>
   <button onclick="clearSavedPrograms()">Clear</button>
   <button id="autoBtn" onclick="toggleAuto()">Start</button>
-  <button onclick="computePerturbationIndex()">Perturbation Index</button>
+  <button onclick="computePerturbationIndex()">Calc Inertia</button>
   <button onclick="computeSelectedCost()">Calc Cost</button>
   <div style='margin-bottom: 10px;'>
 &nbsp;Generation: <span id="mutCount">0</span>
@@ -925,63 +925,72 @@ function computePerturbationIndex() {
     return;
   }
 
-  const before = originalText.slice(0, selStart);
-  const selected = originalText.slice(selStart, selEnd);
-  const after = originalText.slice(selEnd);
-
-  const bracketSelection = `${before} [ ${selected} ] ${after}`;
-  const bracketOthers = `[ ${before} ] ${selected} [ ${after} ]`;
-
-  // Save volatile globals that dry runs may change
+  // Preserve globals touched by dry runs and UI state
   const prevStepCount = stepCount;
   const prevTargetSteps = targetSteps;
+  const prevBitCounter = bitCounter;
 
-  // Validate mutability in both scenarios
-  function hasMutable(codeStr) {
-    const toks = codeStr.trim().split(/\s+/);
-    const prot = new Set();
-    let d = 0;
-    for (let i = 0; i < toks.length; i++) { if (toks[i] === "[") d++; if (d) prot.add(i); if (toks[i] === "]") d--; }
-    for (let i = 0; i < toks.length; i++) { if (!prot.has(i)) return true; }
-    return false;
+  // Build token list and character spans for selection mapping
+  const tokens = [];
+  const spans = [];
+  const re = /\S+/g;
+  let m;
+  while ((m = re.exec(originalText)) !== null) {
+    tokens.push(m[0]);
+    spans.push({ start: m.index, end: m.index + m[0].length });
   }
 
-  if (!hasMutable(bracketSelection)) {
-    alert('When protecting the selection, no tokens remain mutable. Choose a smaller selection.');
-    stepCount = prevStepCount; targetSteps = prevTargetSteps; 
+  // Identify which token indices overlap the selection
+  const selectedTokenIndices = [];
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i].start;
+    const e = spans[i].end;
+    if (s < selEnd && e > selStart) selectedTokenIndices.push(i);
+  }
+  if (selectedTokenIndices.length === 0) {
+    alert('No whole tokens found in the selection.');
     return;
   }
-  if (!hasMutable(bracketOthers)) {
-    alert('When protecting the non-selection, no tokens remain mutable. Choose a larger selection.');
-    stepCount = prevStepCount; targetSteps = prevTargetSteps; 
-    return;
+
+  // Original cost (length * steps)
+  runWithOutput(originalText, false, { dryRun: true });
+  const originalLen = tokens.length;
+  const originalSteps = stepCount;
+  const originalCost = originalLen * originalSteps;
+
+  // Perform N mutations restricted to the selected tokens and average the total cost
+  let sumCost = 0;
+  for (let i = 0; i < PERTURBATION_RUNS; i++) {
+    const mutated = tokens.slice();
+    const idx = selectedTokenIndices[Math.floor(Math.random() * selectedTokenIndices.length)];
+    const oldTok = mutated[idx];
+    let newTok;
+    do {
+      newTok = randToken();
+    } while (newTok === oldTok);
+    mutated[idx] = newTok;
+
+    const mutatedText = mutated.join(' ');
+    runWithOutput(mutatedText, false, { dryRun: true });
+    const steps = stepCount;
+    const len = mutated.length;
+    sumCost += len * steps;
   }
 
-  // Compute with an overall time budget, splitting evenly between the two averages
-  const now = Date.now();
-  const totalDeadline = now + PI_TOTAL_TIMEOUT_MS;
-  const firstDeadline = now + Math.floor(PI_TOTAL_TIMEOUT_MS / 2);
+  const avgCost = sumCost / PERTURBATION_RUNS;
+  const percent = originalCost > 0 ? (avgCost / originalCost) * 100 : 0;
+  const delta = avgCost - originalCost;
 
-  const avg1 = averageInertiaForCode(bracketSelection, PERTURBATION_RUNS, firstDeadline);
-  const avg2 = averageInertiaForCode(bracketOthers, PERTURBATION_RUNS, totalDeadline);
-
-  // Restore globals
+  // Restore globals possibly touched by dry runs
   stepCount = prevStepCount;
   targetSteps = prevTargetSteps;
+  bitCounter = prevBitCounter;
 
-  if (avg1 == null || avg2 == null) {
-    alert('Perturbation Index computation timed out or lacked mutable tokens. Try a smaller selection or shorter program.');
-    // Restore original text and selection
-    ta.value = originalText;
-    try { ta.setSelectionRange(selStart, selEnd); } catch(e) {}
-    return;
-  }
-  const ratio = avg1 / avg2;
-  alert(`Perturbation Index (selection protected vs others protected): ${ratio.toFixed(3)}\navg1=${avg1.toFixed(2)}, avg2=${avg2.toFixed(2)}, runs≈${PERTURBATION_RUNS}`);
-
-  // Restore original text and selection
+  // Restore original text and selection (text was never changed, but selection UX matters)
   ta.value = originalText;
-  try { ta.setSelectionRange(selStart, selEnd); } catch(e) {}
+  try { ta.setSelectionRange(selStart, selEnd); } catch (e) {}
+
+  alert(`${percent.toFixed(2)}% (${Math.abs(delta).toFixed(2)})`);
 }
 
 function computeSelectedCost() {
