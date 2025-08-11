@@ -571,12 +571,12 @@ function runWithOutput(src, debug = false, opts = {}) {
 					}
 				}
 				 // Splice only once, at top level, so nested loops remain intact
-				if (frameRef.tokens === th.tokens) {
-				   const blkStart = startBeforeCollect;
-				   const blkEnd   = frameRef.idx;          // idx after collect
-				   frameRef.tokens.splice(blkStart, blkEnd - blkStart);
-				   frameRef.idx = blkStart;
-				 }
+				                 if (frameRef.tokens === th.tokens) {
+                   const blkStart = startBeforeCollect;
+                   const blkEnd   = frameRef.idx;          // idx after collect
+                   frameRef.tokens.splice(blkStart, blkEnd - blkStart);
+                   th.pc = blkStart;
+                 }
 				continue;
 			}
 
