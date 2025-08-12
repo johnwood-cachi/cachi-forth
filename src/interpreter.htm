@@ -53,7 +53,7 @@
 <script>
 /******************** CONSTANTS & HELPERS *********************/
 const MAX_INST = 2000;
-const ANCHOR_STEPS = 25;
+const ANCHOR_STEPS = 1;
 const CLAMP = v => ((v % 128) + 128) % 128;
 let LABELS = {};   // label-string  -> tokenIndex (-1 = missing)
 let EXECUTION_TRACE = [];
@@ -631,49 +631,35 @@ function runWithOutput(src, debug = false, opts = {}) {
 
 			if (tok.startsWith("@")) {
                 const name = tok.slice(1);
-		  // --- Novelty Anchors ---
-			if (name === "last") {
-				// pop: first = which history (0 = most recent), second = index within selected history
-				const historyIndexRaw = pop();
-				const innerIndexRaw = pop();
-				let val = 0;
-				const hLen = outputHistory.length;
-				if (hLen > 0) {
-					const which = Math.abs(historyIndexRaw) % hLen;
-					const selected = outputHistory.at(-1 - which) || [];
-					if (selected.length > 0) {
-						val = selected[Math.abs(innerIndexRaw) % selected.length] ?? 0;
-					}
-				}
-				S.push(CLAMP(val));
-          if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
-				continue;
-			}
-				 	 if (name === "time") {
-			    S.push(CLAMP(new Date().getSeconds()) % 10);
-			    // we favor external inputs like random and time
-			    inst = inst + ANCHOR_STEPS;
-            if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
-			    continue;
-			  }
-			  if (name === "random") {
-			    S.push(CLAMP(Math.floor(Math.random() * 128)));
-			    // we favor external inputs like random and time
-			    inst = inst + ANCHOR_STEPS;
-            if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
-			    continue;
-			  }		
-                if (functions[name]) {
-			  const fn = functions[name];
-                  const p1 = pop(), p2 = pop(), p3 = pop();
-                  S.push(p3, p2, p1);
-                  th.blockStack.push({type:"func",tokens:[...fn.body],indices:[...fn.indices],idx:0});
-                  if (th.callStack==null) th.callStack = [];
-                  th.callStack.push(fn.label || name);
-            if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
-                }
-                continue;
-              }
+        // --- Novelty Anchors and calls ---
+        if (name === "last") {
+          const historyIndexRaw = pop();
+          const innerIndexRaw = pop();
+          let val = 0;
+          const hLen = outputHistory.length;
+          if (hLen > 0) {
+            const which = Math.abs(historyIndexRaw) % hLen;
+            const selected = outputHistory.at(-1 - which) || [];
+            if (selected.length > 0) {
+              val = selected[Math.abs(innerIndexRaw) % selected.length] ?? 0;
+            }
+          }
+          S.push(CLAMP(val));
+        } else if (name === "time") {
+          S.push(CLAMP(new Date().getSeconds()) % 10);
+        } else if (name === "random") {
+          S.push(CLAMP(Math.floor(Math.random() * 128)));
+        } else if (functions[name]) {
+          const fn = functions[name];
+          const p1 = pop(), p2 = pop(), p3 = pop();
+          S.push(p3, p2, p1);
+          th.blockStack.push({ type: "func", tokens: [...fn.body], indices: [...fn.indices], idx: 0 });
+          if (th.callStack == null) th.callStack = [];
+          th.callStack.push(fn.label || name);
+        }
+        if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+        continue;
+      }
 
 			if (tok.startsWith("branch") && tok.length === 7) {
 				const N = +tok[6];
@@ -724,6 +710,7 @@ frameRef.idx = start;
 
 			const num = parseInt(tok, 10);
 			if (!isNaN(num)) { S.push(CLAMP(num)); if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") }); }
+			else { if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") }); }
 		}
 	}
 		// removed output DOM update
