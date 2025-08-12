@@ -25,7 +25,7 @@
   let snakeTargetTrailPixels = 50; // default min trail length in px
   const SNAKE_MIN_TRAIL_PX = 50;
   const SNAKE_PX_PER_STACK = 5;
-  const SNAKE_SPEED_UNITS_PER_SEC = 1.2; // movement speed in world units
+  const SNAKE_SPEED_UNITS_PER_SEC = 3.6; // movement speed in world units (3x faster)
 
   function initTrace3D() {
     container = document.getElementById('trace3d');
