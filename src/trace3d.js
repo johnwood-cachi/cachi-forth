@@ -58,9 +58,9 @@
     );
     sphere.add(wire);
 
-    // Points container
+    // Points container (tethered to sphere so it rotates together)
     pointsGroup = new THREE.Group();
-    scene.add(pointsGroup);
+    sphere.add(pointsGroup);
 
     // Animation loop
     let animId = 0;
