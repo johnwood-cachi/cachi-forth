@@ -7,7 +7,10 @@
     body{font-family:monospace;background:#111;color:#eee;padding:20px}
     textarea{width:100%;height:200px;background:#222;color:#0f0;border:1px solid #555;padding:10px;font-size:14px}
     button{margin:10px 10px 10px 0;padding:10px}
-    #graph{background:#000;border:1px solid #555;width:100%;height:120px;display:block;margin-top:6px}
+    /* updated graph to half width and added companion 3D area */
+    #graph{background:#000;border:1px solid #555;width:50%;height:120px;display:block;margin-top:6px}
+    .graph-trace-row{display:flex;gap:10px}
+    #trace3d{background:#000;border:1px solid #555;width:50%;height:120px;display:block;margin-top:6px;position:relative;overflow:hidden}
     #history{margin-top:20px;padding:10px;background:#111;border-top:1px solid #555}
     .saved-entry{background:#222;margin-bottom:10px;padding:10px;border:1px solid #444;white-space:pre-wrap}
   </style>
@@ -33,7 +36,10 @@
     &nbsp;|&nbsp;Steps:&nbsp;<span id="stepCount">0</span>
     &nbsp;|&nbsp;Cost:&nbsp;<span id="cost">0</span>
   </div>
-  <svg id="graph"></svg>
+  <div class="graph-trace-row">
+    <svg id="graph"></svg>
+    <div id="trace3d"></div>
+  </div>
 <div id="labelsArea">
   <h2>Labels</h2>
   <div id="labelsList" style="white-space:pre-wrap"></div>
@@ -520,13 +526,13 @@ function runWithOutput(src, debug = false, opts = {}) {
 					}
 				}
 				else if (tok === "out") {
-				  let v;
-				  if (bitCounter > 0) {
-					v = bitCounter;
-					bitCounter = 0;
-				  } else {
-					v = pop();
-				  }
+					let v;
+					if (bitCounter > 0) {
+						v = bitCounter;
+						bitCounter = 0;
+					} else {
+						v = pop();
+					}
 					out.push(v);
 					const cs = th.callStack==null ? '' : th.callStack.join("|");
 					const idx = Math.abs(hashCode(`${th.id}-${cs}`)) % palette.length;
@@ -592,7 +598,7 @@ function runWithOutput(src, debug = false, opts = {}) {
               indices: blk.indices,
 						idx: 0,
 						remaining: n
-		    	   }); 
+			    	   }); 
 					   th.callStack.push(labTok || "LOOP"); 
 					}
 				} else {
@@ -605,18 +611,18 @@ function runWithOutput(src, debug = false, opts = {}) {
 						tokens: blk.tokens,
               indices: blk.indices,
 						idx: 0
-			  				}); 
+				  			}); 
 						th.callStack.push(labTok || tok.toUpperCase()); 
 					}
 				}
 				 // Splice only once, at top level, so nested loops remain intact
 				                 if (frameRef.tokens === th.tokens) {
-		           const blkStart = startBeforeCollect;
-		           const blkEnd   = frameRef.idx;          // idx after collect
-		           frameRef.tokens.splice(blkStart, blkEnd - blkStart);
+			           const blkStart = startBeforeCollect;
+			           const blkEnd   = frameRef.idx;          // idx after collect
+			           frameRef.tokens.splice(blkStart, blkEnd - blkStart);
                  frameRef.indices.splice(blkStart, blkEnd - blkStart);
-		           th.pc = blkStart;
-		         }
+			           th.pc = blkStart;
+			         }
           if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 				continue;
 			}
@@ -1140,5 +1146,8 @@ window.onload = () => {
 	updateMutCount();   // initialise counter to 0 on first load
 };
 </script> 
+<!-- include three.js and the trace3d widget -->
+<script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+<script src="./trace3d.js"></script>
 </body> 
 </html>
