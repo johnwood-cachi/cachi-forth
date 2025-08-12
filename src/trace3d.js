@@ -9,6 +9,23 @@
   let pointsGroup;
   const traceIndexToObject = new Map();
   let sharedPointGeometry = null;
+  // New: per-instruction map and positions
+  const instructionIndexToObject = new Map();
+  let instructionIndexToPosition = [];
+
+  // Snake animation state
+  let snakeGroup = null;
+  let snakeHead = null;
+  let snakeTrailSprites = [];
+  let snakePathPositions = [];
+  let snakeTrace = [];
+  let snakeTraceIndex = 0;
+  let snakeHeadPos = null;
+  let snakeNextPos = null;
+  let snakeTargetTrailPixels = 50; // default min trail length in px
+  const SNAKE_MIN_TRAIL_PX = 50;
+  const SNAKE_PX_PER_STACK = 5;
+  const SNAKE_SPEED_UNITS_PER_SEC = 1.2; // movement speed in world units
 
   function initTrace3D() {
     container = document.getElementById('trace3d');
@@ -62,12 +79,21 @@
     pointsGroup = new THREE.Group();
     sphere.add(pointsGroup);
 
+    // Snake container
+    snakeGroup = new THREE.Group();
+    sphere.add(snakeGroup);
+
     // Animation loop
     let animId = 0;
+    let prevTimeMs = performance.now();
     function animate() {
       animId = requestAnimationFrame(animate);
+      const now = performance.now();
+      const dt = Math.max(0, (now - prevTimeMs) / 1000);
+      prevTimeMs = now;
       sphere.rotation.y += 0.01;
       sphere.rotation.x += 0.005;
+      updateSnake(dt);
       renderer.render(scene, camera);
     }
 
@@ -151,14 +177,46 @@
       // sharedPointGeometry is reused
     }
     traceIndexToObject.clear();
+    instructionIndexToObject.clear();
+    instructionIndexToPosition = [];
+    clearSnake();
+  }
+
+  function clearSnake() {
+    if (!snakeGroup) return;
+    for (let i = snakeGroup.children.length - 1; i >= 0; i--) {
+      const child = snakeGroup.children[i];
+      snakeGroup.remove(child);
+      if (child.material) child.material.dispose?.();
+      if (child.geometry) child.geometry.dispose?.();
+    }
+    snakeHead = null;
+    snakeTrailSprites = [];
+    snakePathPositions = [];
+    snakeTrace = [];
+    snakeTraceIndex = 0;
+    snakeHeadPos = null;
+    snakeNextPos = null;
+    snakeTargetTrailPixels = SNAKE_MIN_TRAIL_PX;
+  }
+
+  function getProgramTokens() {
+    const ta = document.getElementById('program');
+    if (!ta) return [];
+    const txt = (ta.value || '').trim();
+    if (!txt) return [];
+    // Split identical to interpreter
+    return txt.split(/\s+/).filter(Boolean);
   }
 
   function setup(executionTrace) {
-    if (!scene || !pointsGroup || !Array.isArray(executionTrace)) return;
+    if (!scene || !pointsGroup) return;
 
     clearPoints();
 
-    const count = executionTrace.length | 0;
+    // Build points per PROGRAM token (instruction index)
+    const tokens = getProgramTokens();
+    const count = tokens.length | 0;
     if (count <= 0) return;
 
     // Create shared geometry for tiny spheres
@@ -166,30 +224,218 @@
 
     // Pre-compute positions
     const positions = layoutPoints(count);
+    instructionIndexToPosition = positions.map(p => p.clone());
 
-    // Optional: map thread ids to consistent colors
-    const tidSet = new Map();
-    let nextHue = 0;
-    const getColorForTid = (tid) => {
-      if (!tidSet.has(tid)) {
-        tidSet.set(tid, nextHue);
-        nextHue = (nextHue + 47) % 360; // hop hues for variety
-      }
-      const hue = tidSet.get(tid);
-      const color = new THREE.Color();
-      color.setHSL(hue / 360, 0.6, 0.6);
-      return color;
-    };
-
+    // Neutral material color for program points
     for (let i = 0; i < count; i++) {
       const pos = positions[i];
-      const entry = executionTrace[i] || {};
-      const color = getColorForTid(entry.tid == null ? i : entry.tid);
-      const mat = new THREE.MeshStandardMaterial({ color, emissive: color.clone().multiplyScalar(0.2) });
+      const color = new THREE.Color(0x66ccff);
+      const mat = new THREE.MeshStandardMaterial({ color, emissive: color.clone().multiplyScalar(0.15) });
       const m = new THREE.Mesh(sharedPointGeometry, mat);
       m.position.copy(pos);
       pointsGroup.add(m);
-      traceIndexToObject.set(i, m);
+      instructionIndexToObject.set(i, m);
+    }
+
+    // Start snake animation over the provided execution trace
+    startSnakeAnimation(Array.isArray(executionTrace) ? executionTrace.slice() : []);
+  }
+
+  function worldUnitsPerPixelAtDepth(depth) {
+    // depth in world units along view; approximate with camera distance to origin
+    const vFov = THREE.MathUtils.degToRad(camera.fov);
+    const viewHeightAtDepth = 2 * Math.tan(vFov / 2) * Math.max(0.0001, depth);
+    const pixels = Math.max(1, container?.clientHeight || renderer.domElement.height || 1);
+    return viewHeightAtDepth / pixels;
+  }
+
+  function getApproxDepthForTrail() {
+    // Camera looks at origin; use distance to origin as depth approximation
+    return camera.position.length();
+  }
+
+  function ensureSnakeHead() {
+    if (snakeHead) return;
+    const geom = new THREE.SphereGeometry(0.03, 12, 8);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffee88, emissive: 0xffcc33, emissiveIntensity: 1.0 });
+    snakeHead = new THREE.Mesh(geom, mat);
+    snakeGroup.add(snakeHead);
+  }
+
+  function ensureTrailSprites(n) {
+    // Create or remove sprites to match requested count upper bound
+    const tex = null; // default circular sprite
+    while (snakeTrailSprites.length < n) {
+      const smat = new THREE.SpriteMaterial({ color: 0x88ddff, opacity: 0.8, transparent: true, depthWrite: false });
+      const spr = new THREE.Sprite(smat);
+      spr.scale.setScalar(0.06); // size in world units
+      snakeGroup.add(spr);
+      snakeTrailSprites.push(spr);
+    }
+    while (snakeTrailSprites.length > n) {
+      const spr = snakeTrailSprites.pop();
+      snakeGroup.remove(spr);
+      spr.material.dispose?.();
+    }
+  }
+
+  function startSnakeAnimation(trace) {
+    clearSnake();
+    if (!Array.isArray(trace) || trace.length === 0) return;
+
+    // Filter to entries that have a valid instruction index
+    snakeTrace = trace.filter(e => Number.isInteger(e?.ip) && instructionIndexToPosition[e.ip] != null);
+    if (snakeTrace.length === 0) return;
+
+    // Seed head and next positions
+    snakeTraceIndex = 0;
+    snakeHeadPos = instructionIndexToPosition[snakeTrace[0].ip].clone();
+    const nextIdx = snakeTraceIndex + 1 < snakeTrace.length ? snakeTrace[snakeTraceIndex + 1].ip : snakeTrace[0].ip;
+    snakeNextPos = instructionIndexToPosition[nextIdx].clone();
+
+    // Initialize path with starting point
+    snakePathPositions = [snakeHeadPos.clone()];
+
+    // Initial trail target based on first stack size
+    const depth = getStackDepthFromTraceEntry(snakeTrace[0]);
+    snakeTargetTrailPixels = Math.max(SNAKE_MIN_TRAIL_PX, depth * SNAKE_PX_PER_STACK);
+
+    ensureSnakeHead();
+    snakeHead.position.copy(snakeHeadPos);
+  }
+
+  function getStackDepthFromTraceEntry(entry) {
+    const s = entry?.stack;
+    if (!s) return 0;
+    // stack is "a|b|c"; number of items equals segments count
+    return s.length ? s.split('|').filter(x => x.length || x === '').length : 0;
+  }
+
+  function updateSnake(dt) {
+    if (!snakeHead || snakeTrace.length === 0) return;
+
+    // Compute target trail length in world units from pixels
+    const depth = getApproxDepthForTrail();
+    const wupp = worldUnitsPerPixelAtDepth(depth);
+    const targetTrailWorldLen = Math.max(0.01, snakeTargetTrailPixels * wupp);
+
+    // Move head toward next position at fixed speed
+    let remainingMove = Math.max(0, dt) * SNAKE_SPEED_UNITS_PER_SEC;
+    while (remainingMove > 0.00001 && snakeTraceIndex < snakeTrace.length) {
+      const toTarget = new THREE.Vector3().copy(snakeNextPos).sub(snakeHeadPos);
+      const dist = toTarget.length();
+      if (dist <= remainingMove) {
+        // Snap to target and advance to next trace point
+        snakeHeadPos.copy(snakeNextPos);
+        pushPathPoint(snakeHeadPos);
+        remainingMove -= dist;
+        snakeTraceIndex++;
+        if (snakeTraceIndex < snakeTrace.length - 1) {
+          const e = snakeTrace[snakeTraceIndex];
+          const eNext = snakeTrace[snakeTraceIndex + 1];
+          snakeNextPos.copy(instructionIndexToPosition[eNext.ip]);
+          // Update trail pixel length target based on current stack depth
+          const d = getStackDepthFromTraceEntry(e);
+          snakeTargetTrailPixels = Math.max(SNAKE_MIN_TRAIL_PX, d * SNAKE_PX_PER_STACK);
+        } else {
+          // Last entry: stop at its position
+          if (snakeTraceIndex < snakeTrace.length) {
+            const e = snakeTrace[snakeTraceIndex];
+            snakeNextPos.copy(instructionIndexToPosition[e.ip]);
+          }
+          remainingMove = 0;
+          break;
+        }
+      } else {
+        // Move partially towards target
+        const step = toTarget.normalize().multiplyScalar(remainingMove);
+        snakeHeadPos.add(step);
+        pushPathPoint(snakeHeadPos);
+        remainingMove = 0;
+        break;
+      }
+    }
+
+    // Cull path to maintain target length
+    trimPathByLength(targetTrailWorldLen);
+
+    // Update visuals
+    snakeHead.position.copy(snakeHeadPos);
+    updateTrailSprites(targetTrailWorldLen);
+  }
+
+  function pushPathPoint(vec) {
+    const last = snakePathPositions[snakePathPositions.length - 1];
+    if (!last || last.distanceToSquared(vec) > 1e-6) {
+      snakePathPositions.push(vec.clone());
+    }
+  }
+
+  function trimPathByLength(maxLen) {
+    // Ensure cumulative length from head backwards does not exceed maxLen
+    if (snakePathPositions.length <= 1) return;
+    let cum = 0;
+    for (let i = snakePathPositions.length - 1; i > 0; i--) {
+      const a = snakePathPositions[i];
+      const b = snakePathPositions[i - 1];
+      const d = a.distanceTo(b);
+      cum += d;
+      if (cum >= maxLen) {
+        // Trim beyond b, and optionally interpolate b->a to fit exactly
+        const excess = cum - maxLen;
+        if (d > 1e-6) {
+          const t = Math.max(0, Math.min(1, (d - excess) / d));
+          b.lerpVectors(b, a, t);
+          snakePathPositions.splice(0, i - 1);
+        } else {
+          snakePathPositions.splice(0, i - 1);
+        }
+        return;
+      }
+    }
+    // If here, whole path shorter than maxLen -> keep minimal
+    // But avoid unbounded growth: cap to reasonable number of points
+    const MAX_POINTS = 1000;
+    if (snakePathPositions.length > MAX_POINTS) {
+      const drop = snakePathPositions.length - MAX_POINTS;
+      snakePathPositions.splice(0, drop);
+    }
+  }
+
+  function samplePointAtArcLengthFromHead(s) {
+    // s: distance from head backward along the path
+    if (snakePathPositions.length === 0) return null;
+    if (s <= 0) return snakePathPositions[snakePathPositions.length - 1].clone();
+    let remaining = s;
+    for (let i = snakePathPositions.length - 1; i > 0; i--) {
+      const a = snakePathPositions[i];
+      const b = snakePathPositions[i - 1];
+      const d = a.distanceTo(b);
+      if (remaining <= d) {
+        // interpolate between a (closer to head) and b
+        const t = Math.max(0, Math.min(1, 1 - remaining / Math.max(1e-6, d)));
+        return new THREE.Vector3().lerpVectors(b, a, t);
+      }
+      remaining -= d;
+    }
+    return snakePathPositions[0].clone();
+  }
+
+  function updateTrailSprites(targetLen) {
+    // Number of visual samples along trail
+    const N = 40;
+    ensureTrailSprites(N);
+
+    for (let i = 0; i < N; i++) {
+      const frac = i / (N - 1);
+      const s = frac * targetLen;
+      const p = samplePointAtArcLengthFromHead(s);
+      const spr = snakeTrailSprites[i];
+      if (p && spr) {
+        spr.position.copy(p);
+        const alpha = Math.max(0, 1 - frac);
+        spr.material.opacity = 0.85 * Math.pow(alpha, 1.5);
+      }
     }
   }
 
@@ -197,7 +443,8 @@
   window.Trace3D = {
     setup,
     layoutPoints,
-    getObjectForTraceIndex: (idx) => traceIndexToObject.get(idx) || null
+    getObjectForTraceIndex: (idx) => instructionIndexToObject.get(idx) || null,
+    getObjectForInstructionIndex: (idx) => instructionIndexToObject.get(idx) || null
   };
 
   if (document.readyState === 'loading') {
