@@ -27,6 +27,12 @@
   const SNAKE_PX_PER_STACK = 5;
   const SNAKE_SPEED_UNITS_PER_SEC = 3.6; // movement speed in world units (3x faster)
 
+  // Light that follows the snake head
+  let snakePointLight = null;
+  const SNAKE_LIGHT_MAX_INTENSITY = 1.8;
+  const SNAKE_LIGHT_DECAY_SECONDS = 2.0;
+  let snakeLightTimeSincePeak = Infinity;
+
   function initTrace3D() {
     container = document.getElementById('trace3d');
     if (!container) return;
@@ -198,6 +204,8 @@
     snakeHeadPos = null;
     snakeNextPos = null;
     snakeTargetTrailPixels = SNAKE_MIN_TRAIL_PX;
+    snakePointLight = null;
+    snakeLightTimeSincePeak = Infinity;
   }
 
   function getProgramTokens() {
@@ -262,6 +270,14 @@
     snakeGroup.add(snakeHead);
   }
 
+  function ensureSnakeLight() {
+    if (snakePointLight) return;
+    // Warm point light that affects nearby objects; parent to snakeGroup so it rotates with the sphere
+    snakePointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
+    snakePointLight.castShadow = false;
+    snakeGroup.add(snakePointLight);
+  }
+
   function ensureTrailSprites(n) {
     // Create or remove sprites to match requested count upper bound
     const tex = null; // default circular sprite
@@ -301,7 +317,13 @@
     snakeTargetTrailPixels = Math.max(SNAKE_MIN_TRAIL_PX, depth * SNAKE_PX_PER_STACK);
 
     ensureSnakeHead();
+    ensureSnakeLight();
     snakeHead.position.copy(snakeHeadPos);
+    if (snakePointLight) {
+      snakePointLight.position.copy(snakeHeadPos);
+      snakePointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
+      snakeLightTimeSincePeak = 0;
+    }
   }
 
   function getStackDepthFromTraceEntry(entry) {
@@ -328,6 +350,11 @@
         // Snap to target and advance to next trace point
         snakeHeadPos.copy(snakeNextPos);
         pushPathPoint(snakeHeadPos);
+        // Peak the light when we arrive at a target point
+        if (snakePointLight) {
+          snakePointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
+          snakeLightTimeSincePeak = 0;
+        }
         remainingMove -= dist;
         snakeTraceIndex++;
         if (snakeTraceIndex < snakeTrace.length - 1) {
@@ -361,6 +388,22 @@
 
     // Update visuals
     snakeHead.position.copy(snakeHeadPos);
+    if (snakePointLight) {
+      snakePointLight.position.copy(snakeHeadPos);
+      // Exponential-like linear decay to zero over configured duration
+      if (isFinite(snakeLightTimeSincePeak)) {
+        snakeLightTimeSincePeak += Math.max(0, dt);
+        const t = Math.min(1, snakeLightTimeSincePeak / Math.max(1e-6, SNAKE_LIGHT_DECAY_SECONDS));
+        const factor = 1 - t;
+        snakePointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY * factor;
+      }
+    }
+    if (snakeHead?.material) {
+      // Keep the snake head glow in sync with the point light factor (min 0.2 to stay visible)
+      const currentIntensity = snakePointLight ? snakePointLight.intensity : 0;
+      const headFactor = Math.max(0, Math.min(1, currentIntensity / Math.max(1e-6, SNAKE_LIGHT_MAX_INTENSITY)));
+      snakeHead.material.emissiveIntensity = 0.2 + 0.8 * headFactor;
+    }
     updateTrailSprites(targetTrailWorldLen);
   }
 
