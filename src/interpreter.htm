@@ -356,7 +356,9 @@ function runWithOutput(src, debug = false, opts = {}) {
     let thisStep = 0;
 	const functions = {};
 	const { tokens: main, indices: mainIdx } = parseDefs(tokens, functions);
+	let nextThreadId = 0; // stable, monotonic thread IDs per run
 	const threads = [{
+		id: nextThreadId++,
 		pc: 0,
     tokens: main,
     indices: mainIdx,
@@ -490,7 +492,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 			tok = baseTok;
 
 			inst++;
-			if (debug) console.log(`[T${tid}] ${tok} [${S.join(',')}]`);
+			if (debug) console.log(`[T${th.id}] ${tok} [${S.join(',')}]`);
 			// primitives
 			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "bit", "bval", "prune"].includes(tok)) {
 				if (tok === "dup") S.push(S.at(-1) ?? 0);
@@ -504,7 +506,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 				else if (tok === "prune") {
 					const v = pop();
             if (v < 64) {
-              if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+              if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 							 // terminate thread
 							 threads.splice(tid,1); tid--; continue; 
 					}
@@ -519,11 +521,11 @@ function runWithOutput(src, debug = false, opts = {}) {
 				  }
 					out.push(v);
 					const cs = th.callStack==null ? '' : th.callStack.join("|");
-					const idx = Math.abs(hashCode(`${tid}-${cs}`)) % palette.length;
-					outHTML.push(`<span style='color:${palette[idx]}' title='T${tid}${cs?" @"+cs:""}'>${v}</span>`);
+					const idx = Math.abs(hashCode(`${th.id}-${cs}`)) % palette.length;
+					outHTML.push(`<span style='color:${palette[idx]}' title='T${th.id}${cs?" @"+cs:""}'>${v}</span>`);
 					vals.push(v);
 					cols.push(palette[idx]);
-					tips.push(`T${tid}${cs?" @"+cs:""}`);
+					tips.push(`T${th.id}${cs?" @"+cs:""}`);
 				} else {
 					let b = pop(),
 						a = pop(),
@@ -543,7 +545,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 					}
 					S.push(CLAMP(r));
 				}
-          if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+          if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 				continue;
 			}
 			// control blocks helper
@@ -607,7 +609,7 @@ function runWithOutput(src, debug = false, opts = {}) {
                  frameRef.indices.splice(blkStart, blkEnd - blkStart);
 		           th.pc = blkStart;
 		         }
-          if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+          if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 				continue;
 			}
 
@@ -628,21 +630,21 @@ function runWithOutput(src, debug = false, opts = {}) {
 					}
 				}
 				S.push(CLAMP(val));
-          if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+          if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 				continue;
 			}
 				 	 if (name === "time") {
 			    S.push(CLAMP(new Date().getSeconds()) % 10);
 			    // we favor external inputs like random and time
 			    inst = inst + ANCHOR_STEPS;
-            if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+            if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 			    continue;
 			  }
 			  if (name === "random") {
 			    S.push(CLAMP(Math.floor(Math.random() * 128)));
 			    // we favor external inputs like random and time
 			    inst = inst + ANCHOR_STEPS;
-            if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+            if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 			    continue;
 			  }		
                 if (functions[name]) {
@@ -652,7 +654,7 @@ function runWithOutput(src, debug = false, opts = {}) {
                   th.blockStack.push({type:"func",tokens:[...fn.body],indices:[...fn.indices],idx:0});
                   if (th.callStack==null) th.callStack = [];
                   th.callStack.push(fn.label || name);
-            if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+            if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
                 }
                 continue;
               }
@@ -687,12 +689,12 @@ frameRef.idx = start;
 				threads.splice(tid, 1);
 				tid--;
 			}
-          if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+          if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 			continue;
 		}
 
 			const num = parseInt(tok, 10);
-			if (!isNaN(num)) { S.push(CLAMP(num)); if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") }); }
+			if (!isNaN(num)) { S.push(CLAMP(num)); if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") }); }
 		}
 	}
 		if (!dryRun) document.getElementById("output").innerHTML = "Output: " + outHTML.join(" ");
