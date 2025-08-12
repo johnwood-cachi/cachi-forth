@@ -51,6 +51,7 @@ const MAX_INST = 2000;
 const ANCHOR_STEPS = 25;
 const CLAMP = v => ((v % 128) + 128) % 128;
 let LABELS = {};   // label-string  -> tokenIndex (-1 = missing)
+let EXECUTION_TRACE = [];
 
 let autoTimer   = null;   // holds setInterval handle
 let mutCount    = 0;      // shown in UI
@@ -309,26 +310,33 @@ function drawGraph(vals, cols, titles) {
 
 function collectSeed(frame) {
   const opens = ["loop", "ifg", "ifl"];      // tokens that own an `end`
-  const first = frame.tokens[frame.idx++];   // grab the seed’s first token
-  const block = [first];                     // start building the seed array
+  // grab the seed’s first token (and its original index)
+  const firstTok = frame.tokens[frame.idx];
+  const firstIdx = frame.indices[frame.idx];
+  frame.idx++;
+  const blockTokens = [firstTok];               // start building the seed array
+  const blockIndices = [firstIdx];
  
   // ---- NEW: decide if we need to collect a whole control block ----
-  const [base] = splitTok(first);
+  const [base] = splitTok(firstTok);
   if (!opens.includes(base)) {
     // Plain literal / primitive / @call / branchN token – seed is just one token.
-    return block;
+    return { tokens: blockTokens, indices: blockIndices };
   }
 
   // ---- Existing behaviour for real control blocks ----
   let depth = 1;
   while (frame.idx < frame.tokens.length && depth) {
-    const t = frame.tokens[frame.idx++];
+    const t = frame.tokens[frame.idx];
+    const oi = frame.indices[frame.idx];
+    frame.idx++;
     const [b] = splitTok(t);
     if (opens.includes(b)) depth++;
     else if (t === "end")  depth--;
-    block.push(t);
+    blockTokens.push(t);
+    blockIndices.push(oi);
   }
-  return block;
+  return { tokens: blockTokens, indices: blockIndices };
 }
 
 
@@ -343,13 +351,15 @@ function runWithOutput(src, debug = false, opts = {}) {
 		  const [, lab] = splitTok(t);
 		  if (lab) LABELS[lab] = i;          // absolute offset in original token list
 		});
+		EXECUTION_TRACE = [];
 	}
     let thisStep = 0;
 	const functions = {};
-	const main = parseDefs(tokens, functions);
+	const { tokens: main, indices: mainIdx } = parseDefs(tokens, functions);
 	const threads = [{
 		pc: 0,
     tokens: main,
+    indices: mainIdx,
     stack: [],
     callStack: [],
 		blockStack: [],
@@ -364,9 +374,11 @@ function runWithOutput(src, debug = false, opts = {}) {
 
 	function parseDefs(tok, table) {
     const body = [];
+    const bodyIdx = [];
     let currentName = null;
     let currentLabel = null;
     let currentBody = [];
+    let currentIdxs = [];
     let controlDepth = 0; // depth of nested control blocks inside a function
 
     for (let i = 0; i < tok.length; i++) {
@@ -378,11 +390,12 @@ function runWithOutput(src, debug = false, opts = {}) {
             const raw = tk.slice(1);
             const [name, lab] = splitTok(raw);
             if (currentName !== null) {
-                table[currentName] = { body: currentBody, label: currentLabel };
+                table[currentName] = { body: currentBody, label: currentLabel, indices: currentIdxs };
             }
             currentName = name;
             currentLabel = lab;
             currentBody = [];
+            currentIdxs = [];
             controlDepth = 0;
             continue;
         }
@@ -393,6 +406,7 @@ function runWithOutput(src, debug = false, opts = {}) {
             // We are inside a function body
             if (base === "loop" || base === "ifg" || base === "ifl") {
                 currentBody.push(tk);
+                currentIdxs.push(i);
                 controlDepth += 1;
                 continue;
             }
@@ -400,31 +414,35 @@ function runWithOutput(src, debug = false, opts = {}) {
                 if (controlDepth > 0) {
                     // close an inner control block, not the function
                     currentBody.push(tk);
+                    currentIdxs.push(i);
                     controlDepth -= 1;
                 } else {
                     // close the function body
-                    table[currentName] = { body: currentBody, label: currentLabel };
+                    table[currentName] = { body: currentBody, label: currentLabel, indices: currentIdxs };
                     currentName = null;
                     currentLabel = null;
                     currentBody = [];
+                    currentIdxs = [];
                     controlDepth = 0;
                 }
                 continue;
             }
             // any other token is part of the current function body
             currentBody.push(tk);
+            currentIdxs.push(i);
         } else {
             // Not inside a function: token belongs to main body
             body.push(tk);
+            bodyIdx.push(i);
         }
     }
 
     // If file ends while inside a function, implicitly close it
     if (currentName !== null) {
-        table[currentName] = { body: currentBody, label: currentLabel };
+        table[currentName] = { body: currentBody, label: currentLabel, indices: currentIdxs };
     }
 
-    return body;
+    return { tokens: body, indices: bodyIdx };
 }
 
 	let inst = 0;
@@ -434,11 +452,13 @@ function runWithOutput(src, debug = false, opts = {}) {
 				S = th.stack,
 				pop = () => S.pop() ?? 0;
 			let tok;
+        let origIndex = -1;
 			// fetch token
 			while (true) {
 				if (th.blockStack.length) {
 					const blk = th.blockStack[th.blockStack.length - 1];
 					if (blk.idx < blk.tokens.length) {
+            origIndex = blk.indices[blk.idx];
 						tok = blk.tokens[blk.idx++];
 						break;
 					}
@@ -447,10 +467,10 @@ function runWithOutput(src, debug = false, opts = {}) {
 		    if (blk.type === "loop" || blk.type === "once") th.callStack.pop();
 
                     if (blk.type === "loop" && --blk.remaining > 0) {
-            		th.blockStack.push({
-						...blk,
-						idx: 0
-						});
+            			th.blockStack.push({
+							...blk,
+							idx: 0
+							});
 						th.callStack.push(blk.label || "LOOP"); 
 					} else continue;
 				} else {
@@ -460,6 +480,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 						tok = null;
 						break;
 					}
+            origIndex = th.indices[th.pc];
 					tok = th.tokens[th.pc++];
 					break;
 				}
@@ -482,9 +503,10 @@ function runWithOutput(src, debug = false, opts = {}) {
 				else if (tok === "bval") { S.push(bitCounter); bitCounter = 0; }
 				else if (tok === "prune") {
 					const v = pop();
-					if (v<64) {
-						 // terminate thread
-						 threads.splice(tid,1); tid--; continue; 
+            if (v < 64) {
+              if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+							 // terminate thread
+							 threads.splice(tid,1); tid--; continue; 
 					}
 				}
 				else if (tok === "out") {
@@ -521,25 +543,30 @@ function runWithOutput(src, debug = false, opts = {}) {
 					}
 					S.push(CLAMP(r));
 				}
+          if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 				continue;
 			}
 			// control blocks helper
 			function collect(label, frame) {
-				const blk = []; 
+				const blkTokens = []; 
+				const blkIndices = [];
 				let d = 1;
               const opens = ["loop", "ifg", "ifl"]; 
 				while (frame.idx < frame.tokens.length && d) {
-					const t = frame.tokens[frame.idx++];
+					const t = frame.tokens[frame.idx];
+            const oi = frame.indices[frame.idx];
+            frame.idx++;
 					const [b] = splitTok(t);
 					if (opens.includes(b)) d++;
 					else if (t === "end") d--;
-					if (d) blk.push(t);
+					if (d) { blkTokens.push(t); blkIndices.push(oi); }
 				}
-				return blk;
+				return { tokens: blkTokens, indices: blkIndices };
 			}
 			// current frame ref
 			const frameRef = th.blockStack.length ? th.blockStack[th.blockStack.length - 1] : {
 				tokens: th.tokens,
+          indices: th.indices,
 				idx: th.pc
 			};
 
@@ -551,10 +578,11 @@ function runWithOutput(src, debug = false, opts = {}) {
 					if (n > 0) {
 					   th.blockStack.push({
 						type: "loop",
-						tokens: blk,
+						tokens: blk.tokens,
+              indices: blk.indices,
 						idx: 0,
 						remaining: n
-		   		   }); 
+		    	   }); 
 					   th.callStack.push(labTok || "LOOP"); 
 					}
 				} else {
@@ -564,19 +592,22 @@ function runWithOutput(src, debug = false, opts = {}) {
 					if (ok) {
 						th.blockStack.push({
 						type: "once",
-						tokens: blk,
+						tokens: blk.tokens,
+              indices: blk.indices,
 						idx: 0
-		  				}); 
+			  				}); 
 						th.callStack.push(labTok || tok.toUpperCase()); 
 					}
 				}
 				 // Splice only once, at top level, so nested loops remain intact
 				                 if (frameRef.tokens === th.tokens) {
-                   const blkStart = startBeforeCollect;
-                   const blkEnd   = frameRef.idx;          // idx after collect
-                   frameRef.tokens.splice(blkStart, blkEnd - blkStart);
-                   th.pc = blkStart;
-                 }
+		           const blkStart = startBeforeCollect;
+		           const blkEnd   = frameRef.idx;          // idx after collect
+		           frameRef.tokens.splice(blkStart, blkEnd - blkStart);
+                 frameRef.indices.splice(blkStart, blkEnd - blkStart);
+		           th.pc = blkStart;
+		         }
+          if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 				continue;
 			}
 
@@ -597,27 +628,31 @@ function runWithOutput(src, debug = false, opts = {}) {
 					}
 				}
 				S.push(CLAMP(val));
+          if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 				continue;
 			}
-		    	 if (name === "time") {
+				 	 if (name === "time") {
 			    S.push(CLAMP(new Date().getSeconds()) % 10);
 			    // we favor external inputs like random and time
 			    inst = inst + ANCHOR_STEPS;
+            if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 			    continue;
 			  }
 			  if (name === "random") {
 			    S.push(CLAMP(Math.floor(Math.random() * 128)));
 			    // we favor external inputs like random and time
 			    inst = inst + ANCHOR_STEPS;
+            if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 			    continue;
 			  }		
                 if (functions[name]) {
 			  const fn = functions[name];
                   const p1 = pop(), p2 = pop(), p3 = pop();
                   S.push(p3, p2, p1);
-                  th.blockStack.push({type:"func",tokens:[...fn.body],idx:0});
+                  th.blockStack.push({type:"func",tokens:[...fn.body],indices:[...fn.indices],idx:0});
                   if (th.callStack==null) th.callStack = [];
                   th.callStack.push(fn.label || name);
+            if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
                 }
                 continue;
               }
@@ -629,19 +664,21 @@ function runWithOutput(src, debug = false, opts = {}) {
                       const seedStartIndex = frameRef.idx;
                       
                   for (let i = 0; i < N; i++) {
-                    seeds.push( collectSeed(frameRef) );     // collectSeed returns an array of tokens
+                    seeds.push( collectSeed(frameRef) );     // collectSeed returns { tokens, indices }
                   }
 const start = seedStartIndex;                // idx value you saved *before* the for-loop
 const end   = frameRef.idx;                  // idx after collecting all N seeds
 frameRef.tokens.splice(start, end - start);  // remove original seed tokens
+frameRef.indices.splice(start, end - start);
 frameRef.idx = start;
   const rest = frameRef.tokens.slice(frameRef.idx);
                     for (const seed of seeds) {
                       // deep-clone the *whole* thread
                       const clone = JSON.parse(JSON.stringify(th));   // or manual deep copy
                       const top   = clone.blockStack.length ? clone.blockStack[clone.blockStack.length - 1]
-                                                          : { tokens: clone.tokens, idx: frameRef.idx };
-                    top.tokens.splice(top.idx, 0, ...seed); 
+                                                          : { tokens: clone.tokens, indices: clone.indices, idx: frameRef.idx };
+                    top.tokens.splice(top.idx, 0, ...seed.tokens); 
+                    top.indices.splice(top.idx, 0, ...seed.indices);
                       clone.callStack = [...clone.callStack, `T${tid}`]; 
                       threads.push(clone);                            // new parallel thread
                     }
@@ -650,11 +687,12 @@ frameRef.idx = start;
 				threads.splice(tid, 1);
 				tid--;
 			}
+          if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 			continue;
 		}
 
 			const num = parseInt(tok, 10);
-			if (!isNaN(num)) S.push(CLAMP(num));
+			if (!isNaN(num)) { S.push(CLAMP(num)); if (!dryRun) EXECUTION_TRACE.push({ ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") }); }
 		}
 	}
 		if (!dryRun) document.getElementById("output").innerHTML = "Output: " + outHTML.join(" ");
