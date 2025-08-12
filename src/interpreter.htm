@@ -673,22 +673,35 @@ const end   = frameRef.idx;                  // idx after collecting all N seeds
 frameRef.tokens.splice(start, end - start);  // remove original seed tokens
 frameRef.indices.splice(start, end - start);
 frameRef.idx = start;
-  const rest = frameRef.tokens.slice(frameRef.idx);
-                    for (const seed of seeds) {
-                      // deep-clone the *whole* thread
-                      const clone = JSON.parse(JSON.stringify(th));   // or manual deep copy
-                      const top   = clone.blockStack.length ? clone.blockStack[clone.blockStack.length - 1]
-                                                          : { tokens: clone.tokens, indices: clone.indices, idx: frameRef.idx };
-                    top.tokens.splice(top.idx, 0, ...seed.tokens); 
-                    top.indices.splice(top.idx, 0, ...seed.indices);
-                      clone.callStack = [...clone.callStack, `T${tid}`]; 
-                      threads.push(clone);                            // new parallel thread
-                    }
 
-                  
-				threads.splice(tid, 1);
-				tid--;
-			}
+    // If operating on main stream (no active block), move pc to start so we execute inserted seed(s)
+    if (frameRef.tokens === th.tokens) {
+      th.pc = start;
+    }
+
+    // Apply first seed to the current thread so it retains its existing thread id
+    if (seeds.length > 0) {
+      const s0 = seeds[0];
+      const top0 = th.blockStack.length ? th.blockStack[th.blockStack.length - 1]
+                                        : { tokens: th.tokens, indices: th.indices, idx: start };
+      top0.tokens.splice(top0.idx, 0, ...s0.tokens);
+      top0.indices.splice(top0.idx, 0, ...s0.indices);
+    }
+
+    // Spawn remaining seeds as new threads with unique ids
+    for (let i = 1; i < seeds.length; i++) {
+      const seed = seeds[i];
+      // deep-clone the *whole* thread state
+      const clone = JSON.parse(JSON.stringify(th));
+      const top   = clone.blockStack.length ? clone.blockStack[clone.blockStack.length - 1]
+                                            : { tokens: clone.tokens, indices: clone.indices, idx: start };
+      top.tokens.splice(top.idx, 0, ...seed.tokens);
+      top.indices.splice(top.idx, 0, ...seed.indices);
+      clone.pc = start;
+      clone.id = nextThreadId++;
+      threads.push(clone);
+    }
+                }
           if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
 			continue;
 		}
