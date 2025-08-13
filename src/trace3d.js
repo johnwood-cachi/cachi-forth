@@ -23,25 +23,18 @@
   const TARGET_LIGHT_DISTANCE = 1.5;
   const TARGET_LIGHT_DECAY = 2.0;
 
-  // Snake animation state
+  // Snake animation state (multi-thread)
   let snakeGroup = null;
-  let snakeHead = null;
-  let snakeTrailSprites = [];
-  let snakePathPositions = [];
-  let snakeTrace = [];
-  let snakeTraceIndex = 0;
-  let snakeHeadPos = null;
-  let snakeNextPos = null;
-  let snakeTargetTrailPixels = 50; // default min trail length in px
+  const snakesByTid = new Map();
+  let globalTrace = [];
+  let globalTraceIndex = 0;
+  let lastActiveTid = null;
   const SNAKE_MIN_TRAIL_PX = 50;
   const SNAKE_PX_PER_STACK = 5;
   const SNAKE_SPEED_UNITS_PER_SEC = 3.6; // movement speed in world units (3x faster)
 
-  // Light that follows the snake head
-  let snakePointLight = null;
   const SNAKE_LIGHT_MAX_INTENSITY = 5.0;
   const SNAKE_LIGHT_DECAY_SECONDS = 2.0;
-  let snakeLightTimeSincePeak = Infinity;
 
   function initTrace3D() {
     container = document.getElementById('trace3d');
@@ -119,7 +112,7 @@
       prevTimeMs = now;
       sphere.rotation.y += 0.01;
       sphere.rotation.x += 0.005;
-      updateSnake(dt);
+      updateSnakes(dt);
       renderer.render(scene, camera);
     }
 
@@ -205,7 +198,7 @@
     traceIndexToObject.clear();
     instructionIndexToObject.clear();
     instructionIndexToPosition = [];
-    clearSnake();
+    clearSnakes();
     instructionIndexToHighlightTime.clear();
     // Remove any lingering highlight lights
     instructionIndexToHighlightLight.forEach((light) => {
@@ -214,7 +207,7 @@
     instructionIndexToHighlightLight.clear();
   }
 
-  function clearSnake() {
+  function clearSnakes() {
     if (!snakeGroup) return;
     for (let i = snakeGroup.children.length - 1; i >= 0; i--) {
       const child = snakeGroup.children[i];
@@ -222,16 +215,10 @@
       if (child.material) child.material.dispose?.();
       if (child.geometry) child.geometry.dispose?.();
     }
-    snakeHead = null;
-    snakeTrailSprites = [];
-    snakePathPositions = [];
-    snakeTrace = [];
-    snakeTraceIndex = 0;
-    snakeHeadPos = null;
-    snakeNextPos = null;
-    snakeTargetTrailPixels = SNAKE_MIN_TRAIL_PX;
-    snakePointLight = null;
-    snakeLightTimeSincePeak = Infinity;
+    snakesByTid.clear();
+    globalTrace = [];
+    globalTraceIndex = 0;
+    lastActiveTid = null;
   }
 
   function getProgramTokens() {
@@ -291,67 +278,89 @@
     return camera.position.length();
   }
 
-  function ensureSnakeHead() {
-    if (snakeHead) return;
-    const geom = new THREE.SphereGeometry(0.03, 12, 8);
-    const mat = new THREE.MeshStandardMaterial({ color: 0xffee88, emissive: 0xffcc33, emissiveIntensity: 1.0 });
-    snakeHead = new THREE.Mesh(geom, mat);
-    snakeGroup.add(snakeHead);
+  function createSnake(tid, startPos, cloneFromSnake = null) {
+    const group = new THREE.Group();
+    snakeGroup.add(group);
+
+    const headGeom = new THREE.SphereGeometry(0.03, 12, 8);
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xffee88, emissive: 0xffcc33, emissiveIntensity: 1.0 });
+    const head = new THREE.Mesh(headGeom, headMat);
+    head.position.copy(startPos);
+    group.add(head);
+
+    const pointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
+    pointLight.castShadow = false;
+    group.add(pointLight);
+
+    let initialPath = [startPos.clone()];
+    if (cloneFromSnake && Array.isArray(cloneFromSnake.pathPositions) && cloneFromSnake.pathPositions.length) {
+      initialPath = cloneFromSnake.pathPositions.map(p => p.clone());
+      const last = initialPath[initialPath.length - 1];
+      if (!last || last.distanceToSquared(startPos) > 1e-6) initialPath.push(startPos.clone());
+    }
+
+    const snake = {
+      tid,
+      group,
+      head,
+      pointLight,
+      trailSprites: [],
+      pathPositions: initialPath,
+      targetTrailPixels: SNAKE_MIN_TRAIL_PX,
+      lightTimeSincePeak: Infinity,
+      targetPos: startPos.clone()
+    };
+    snakesByTid.set(tid, snake);
+    return snake;
   }
 
-  function ensureSnakeLight() {
-    if (snakePointLight) return;
-    // Warm point light that affects nearby objects; parent to snakeGroup so it rotates with the sphere
-    snakePointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
-    snakePointLight.castShadow = false;
-    snakeGroup.add(snakePointLight);
+  function getOrCreateSnake(tid, spawnPos, cloneFromSnake = null) {
+    let s = snakesByTid.get(tid);
+    if (!s) s = createSnake(tid, spawnPos, cloneFromSnake);
+    return s;
   }
 
-  function ensureTrailSprites(n) {
-    // Create or remove sprites to match requested count upper bound
-    const tex = null; // default circular sprite
-    while (snakeTrailSprites.length < n) {
+  function ensureTrailSpritesForSnake(snake, n) {
+    while (snake.trailSprites.length < n) {
       const smat = new THREE.SpriteMaterial({ color: 0x88ddff, opacity: 0.8, transparent: true, depthWrite: false });
       const spr = new THREE.Sprite(smat);
-      spr.scale.setScalar(0.06); // size in world units
-      snakeGroup.add(spr);
-      snakeTrailSprites.push(spr);
+      spr.scale.setScalar(0.06);
+      snake.group.add(spr);
+      snake.trailSprites.push(spr);
     }
-    while (snakeTrailSprites.length > n) {
-      const spr = snakeTrailSprites.pop();
-      snakeGroup.remove(spr);
+    while (snake.trailSprites.length > n) {
+      const spr = snake.trailSprites.pop();
+      snake.group.remove(spr);
       spr.material.dispose?.();
     }
   }
 
   function startSnakeAnimation(trace) {
-    clearSnake();
+    clearSnakes();
     if (!Array.isArray(trace) || trace.length === 0) return;
 
     // Filter to entries that have a valid instruction index
-    snakeTrace = trace.filter(e => Number.isInteger(e?.ip) && instructionIndexToPosition[e.ip] != null);
-    if (snakeTrace.length === 0) return;
+    globalTrace = trace.filter(e => Number.isInteger(e?.ip) && instructionIndexToPosition[e.ip] != null);
+    if (globalTrace.length === 0) return;
 
     // Seed head and next positions
-    snakeTraceIndex = 0;
-    snakeHeadPos = instructionIndexToPosition[snakeTrace[0].ip].clone();
-    const nextIdx = snakeTraceIndex + 1 < snakeTrace.length ? snakeTrace[snakeTraceIndex + 1].ip : snakeTrace[0].ip;
-    snakeNextPos = instructionIndexToPosition[nextIdx].clone();
+    globalTraceIndex = 0;
+    lastActiveTid = null; // No active snake initially
 
-    // Initialize path with starting point
-    snakePathPositions = [snakeHeadPos.clone()];
-
-    // Initial trail target based on first stack size
-    const depth = getStackDepthFromTraceEntry(snakeTrace[0]);
-    snakeTargetTrailPixels = Math.max(SNAKE_MIN_TRAIL_PX, depth * SNAKE_PX_PER_STACK);
-
-    ensureSnakeHead();
-    ensureSnakeLight();
-    snakeHead.position.copy(snakeHeadPos);
-    if (snakePointLight) {
-      snakePointLight.position.copy(snakeHeadPos);
-      snakePointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
-      snakeLightTimeSincePeak = 0;
+    // Initialize snakes as we encounter new tids during animation.
+    // Create snake for tid 0 immediately at its first ip if present.
+    const firstEntry = globalTrace[0];
+    if (firstEntry && Number.isInteger(firstEntry.tid)) {
+      const startPos = instructionIndexToPosition[firstEntry.ip].clone();
+      getOrCreateSnake(firstEntry.tid, startPos, null);
+      lastActiveTid = firstEntry.tid;
+      const s = snakesByTid.get(firstEntry.tid);
+      if (s) {
+        s.head.position.copy(startPos);
+        s.pointLight.position.copy(startPos);
+        s.pointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
+        s.lightTimeSincePeak = 0;
+      }
     }
   }
 
@@ -362,155 +371,154 @@
     return s.length ? s.split('|').filter(x => x.length || x === '').length : 0;
   }
 
-  function updateSnake(dt) {
-    if (!snakeHead || snakeTrace.length === 0) return;
+  function updateSnakes(dt) {
+    if (globalTrace.length === 0) return;
 
     // Compute target trail length in world units from pixels
     const depth = getApproxDepthForTrail();
     const wupp = worldUnitsPerPixelAtDepth(depth);
-    const targetTrailWorldLen = Math.max(0.01, snakeTargetTrailPixels * wupp);
+    const targetTrailWorldLen = Math.max(0.01, SNAKE_MIN_TRAIL_PX * wupp);
 
-    // Move head toward next position at fixed speed
+    // Move the appropriate snake toward its next ip at fixed speed
     let remainingMove = Math.max(0, dt) * SNAKE_SPEED_UNITS_PER_SEC;
-    while (remainingMove > 0.00001 && snakeTraceIndex < snakeTrace.length) {
-      const toTarget = new THREE.Vector3().copy(snakeNextPos).sub(snakeHeadPos);
+    while (remainingMove > 0.00001 && globalTraceIndex < globalTrace.length) {
+      const currentEntry = globalTrace[globalTraceIndex];
+      const tid = currentEntry?.tid;
+      const ip = currentEntry?.ip;
+      if (!Number.isInteger(tid) || !Number.isInteger(ip)) {
+        globalTraceIndex++;
+        continue;
+      }
+
+      // Ensure a snake exists for this tid. If this is the first time we see this tid,
+      // clone the last active snake's path (if any) and spawn at the current location of that snake.
+      const lastSnake = lastActiveTid != null ? snakesByTid.get(lastActiveTid) : null;
+      const forkPos = lastSnake ? lastSnake.head.position.clone() : instructionIndexToPosition[ip].clone();
+      const snake = getOrCreateSnake(tid, forkPos, lastSnake || null);
+      lastActiveTid = tid;
+
+      // Move THIS snake to the current entry's ip
+      snake.targetPos.copy(instructionIndexToPosition[ip]);
+
+      const toTarget = new THREE.Vector3().copy(snake.targetPos).sub(snake.head.position);
       const dist = toTarget.length();
+
       if (dist <= remainingMove) {
-        // Snap to target and advance to next trace point
-        snakeHeadPos.copy(snakeNextPos);
-        pushPathPoint(snakeHeadPos);
-        // Peak the light when we arrive at a target point
-        if (snakePointLight) {
-          snakePointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
-          snakeLightTimeSincePeak = 0;
-        }
+        // Snap to target and advance global trace index
+        snake.head.position.copy(snake.targetPos);
+        // Append to path
+        pushPathPointForSnake(snake, snake.head.position);
+        // Light peak on arrival
+        snake.pointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
+        snake.lightTimeSincePeak = 0;
+
         remainingMove -= dist;
-        snakeTraceIndex++;
-        // Trigger highlight on the instruction we just reached
-        if (snakeTrace.length > 0) {
-          const reachedEntry = snakeTrace[Math.min(snakeTraceIndex, snakeTrace.length - 1)];
-          if (Number.isInteger(reachedEntry?.ip)) triggerTargetHighlight(reachedEntry.ip);
-        }
-        if (snakeTraceIndex < snakeTrace.length - 1) {
-          const e = snakeTrace[snakeTraceIndex];
-          const eNext = snakeTrace[snakeTraceIndex + 1];
-          snakeNextPos.copy(instructionIndexToPosition[eNext.ip]);
-          // Update trail pixel length target based on current stack depth
-          const d = getStackDepthFromTraceEntry(e);
-          snakeTargetTrailPixels = Math.max(SNAKE_MIN_TRAIL_PX, d * SNAKE_PX_PER_STACK);
-        } else {
-          // Last entry: stop at its position
-          if (snakeTraceIndex < snakeTrace.length) {
-            const e = snakeTrace[snakeTraceIndex];
-            snakeNextPos.copy(instructionIndexToPosition[e.ip]);
-          }
-          remainingMove = 0;
-          break;
-        }
+        globalTraceIndex++;
+
+        // Highlight reached instruction
+        triggerTargetHighlight(ip);
+
+        // Update trail pixel target based on current stack depth
+        const d = getStackDepthFromTraceEntry(currentEntry);
+        snake.targetTrailPixels = Math.max(SNAKE_MIN_TRAIL_PX, d * SNAKE_PX_PER_STACK);
       } else {
         // Move partially towards target
         const step = toTarget.normalize().multiplyScalar(remainingMove);
-        snakeHeadPos.add(step);
-        pushPathPoint(snakeHeadPos);
+        snake.head.position.add(step);
+        pushPathPointForSnake(snake, snake.head.position);
         remainingMove = 0;
         break;
       }
     }
 
-    // Cull path to maintain target length
-    trimPathByLength(targetTrailWorldLen);
+    // Update visuals per snake
+    snakesByTid.forEach((snake) => {
+      // Skip snakes that haven't been placed yet
+      if (!snake.head) return;
 
-    // Update visuals
-    snakeHead.position.copy(snakeHeadPos);
-    if (snakePointLight) {
-      snakePointLight.position.copy(snakeHeadPos);
-      // Exponential-like linear decay to zero over configured duration
-      if (isFinite(snakeLightTimeSincePeak)) {
-        snakeLightTimeSincePeak += Math.max(0, dt);
-        const t = Math.min(1, snakeLightTimeSincePeak / Math.max(1e-6, SNAKE_LIGHT_DECAY_SECONDS));
+      // Trim path to requested length for each snake
+      trimPathByLengthForSnake(snake, Math.max(0.01, snake.targetTrailPixels * wupp));
+
+      snake.pointLight.position.copy(snake.head.position);
+      if (isFinite(snake.lightTimeSincePeak)) {
+        snake.lightTimeSincePeak += Math.max(0, dt);
+        const t = Math.min(1, snake.lightTimeSincePeak / Math.max(1e-6, SNAKE_LIGHT_DECAY_SECONDS));
         const factor = 1 - t;
-        snakePointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY * factor;
+        snake.pointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY * factor;
       }
-    }
-    if (snakeHead?.material) {
-      // Keep the snake head glow in sync with the point light factor (min 0.2 to stay visible)
-      const currentIntensity = snakePointLight ? snakePointLight.intensity : 0;
-      const headFactor = Math.max(0, Math.min(1, currentIntensity / Math.max(1e-6, SNAKE_LIGHT_MAX_INTENSITY)));
-      snakeHead.material.emissiveIntensity = 0.2 + 0.8 * headFactor;
-    }
-    updateTrailSprites(targetTrailWorldLen);
+      if (snake.head.material) {
+        const currentIntensity = snake.pointLight.intensity;
+        const headFactor = Math.max(0, Math.min(1, currentIntensity / Math.max(1e-6, SNAKE_LIGHT_MAX_INTENSITY)));
+        snake.head.material.emissiveIntensity = 0.2 + 0.8 * headFactor;
+      }
+
+      // Trail sprites
+      updateTrailSpritesForSnake(snake, Math.max(0.01, snake.targetTrailPixels * wupp));
+    });
 
     // Update target highlight fades
     updateTargetHighlights(dt);
   }
 
-  function pushPathPoint(vec) {
-    const last = snakePathPositions[snakePathPositions.length - 1];
+  function pushPathPointForSnake(snake, vec) {
+    const last = snake.pathPositions[snake.pathPositions.length - 1];
     if (!last || last.distanceToSquared(vec) > 1e-6) {
-      snakePathPositions.push(vec.clone());
+      snake.pathPositions.push(vec.clone());
     }
   }
 
-  function trimPathByLength(maxLen) {
-    // Ensure cumulative length from head backwards does not exceed maxLen
-    if (snakePathPositions.length <= 1) return;
-    let cum = 0;
-    for (let i = snakePathPositions.length - 1; i > 0; i--) {
-      const a = snakePathPositions[i];
-      const b = snakePathPositions[i - 1];
+  function trimPathByLengthForSnake(snake, maxLen) {
+    if (snake.pathPositions.length <= 1) return;
+    let cumulative = 0;
+    for (let i = snake.pathPositions.length - 1; i > 0; i--) {
+      const a = snake.pathPositions[i];
+      const b = snake.pathPositions[i - 1];
       const d = a.distanceTo(b);
-      cum += d;
-      if (cum >= maxLen) {
-        // Trim beyond b, and optionally interpolate b->a to fit exactly
-        const excess = cum - maxLen;
+      cumulative += d;
+      if (cumulative >= maxLen) {
+        const excess = cumulative - maxLen;
         if (d > 1e-6) {
           const t = Math.max(0, Math.min(1, (d - excess) / d));
           b.lerpVectors(b, a, t);
-          snakePathPositions.splice(0, i - 1);
+          snake.pathPositions.splice(0, i - 1);
         } else {
-          snakePathPositions.splice(0, i - 1);
+          snake.pathPositions.splice(0, i - 1);
         }
         return;
       }
     }
-    // If here, whole path shorter than maxLen -> keep minimal
-    // But avoid unbounded growth: cap to reasonable number of points
     const MAX_POINTS = 1000;
-    if (snakePathPositions.length > MAX_POINTS) {
-      const drop = snakePathPositions.length - MAX_POINTS;
-      snakePathPositions.splice(0, drop);
+    if (snake.pathPositions.length > MAX_POINTS) {
+      const drop = snake.pathPositions.length - MAX_POINTS;
+      snake.pathPositions.splice(0, drop);
     }
   }
 
-  function samplePointAtArcLengthFromHead(s) {
-    // s: distance from head backward along the path
-    if (snakePathPositions.length === 0) return null;
-    if (s <= 0) return snakePathPositions[snakePathPositions.length - 1].clone();
+  function samplePointAtArcLengthFromHeadForSnake(snake, s) {
+    if (snake.pathPositions.length === 0) return null;
+    if (s <= 0) return snake.pathPositions[snake.pathPositions.length - 1].clone();
     let remaining = s;
-    for (let i = snakePathPositions.length - 1; i > 0; i--) {
-      const a = snakePathPositions[i];
-      const b = snakePathPositions[i - 1];
+    for (let i = snake.pathPositions.length - 1; i > 0; i--) {
+      const a = snake.pathPositions[i];
+      const b = snake.pathPositions[i - 1];
       const d = a.distanceTo(b);
       if (remaining <= d) {
-        // interpolate between a (closer to head) and b
         const t = Math.max(0, Math.min(1, 1 - remaining / Math.max(1e-6, d)));
         return new THREE.Vector3().lerpVectors(b, a, t);
       }
       remaining -= d;
     }
-    return snakePathPositions[0].clone();
+    return snake.pathPositions[0].clone();
   }
 
-  function updateTrailSprites(targetLen) {
-    // Number of visual samples along trail
+  function updateTrailSpritesForSnake(snake, targetLen) {
     const N = 40;
-    ensureTrailSprites(N);
-
+    ensureTrailSpritesForSnake(snake, N);
     for (let i = 0; i < N; i++) {
       const frac = i / (N - 1);
       const s = frac * targetLen;
-      const p = samplePointAtArcLengthFromHead(s);
-      const spr = snakeTrailSprites[i];
+      const p = samplePointAtArcLengthFromHeadForSnake(snake, s);
+      const spr = snake.trailSprites[i];
       if (p && spr) {
         spr.position.copy(p);
         const alpha = Math.max(0, 1 - frac);
