@@ -36,6 +36,10 @@
   const SNAKE_LIGHT_MAX_INTENSITY = 5.0;
   const SNAKE_LIGHT_DECAY_SECONDS = 2.0;
 
+  // Parallel animation scheduling
+  let eventAccumulator = 0;
+  const EVENTS_PER_SECOND = 60;
+
   function initTrace3D() {
     container = document.getElementById('trace3d');
     if (!container) return;
@@ -308,7 +312,9 @@
       pathPositions: initialPath,
       targetTrailPixels: SNAKE_MIN_TRAIL_PX,
       lightTimeSincePeak: Infinity,
-      targetPos: startPos.clone()
+      targetPos: startPos.clone(),
+      pendingTargets: [],
+      currentEvent: null
     };
     snakesByTid.set(tid, snake);
     return snake;
@@ -343,25 +349,25 @@
     globalTrace = trace.filter(e => Number.isInteger(e?.ip) && instructionIndexToPosition[e.ip] != null);
     if (globalTrace.length === 0) return;
 
-    // Seed head and next positions
+    // Reset parallel scheduler state
     globalTraceIndex = 0;
-    lastActiveTid = null; // No active snake initially
+    eventAccumulator = 0;
+    lastActiveTid = null;
 
-    // Initialize snakes as we encounter new tids during animation.
-    // Create snake for tid 0 immediately at its first ip if present.
+    // Initialize first snake position if available
     const firstEntry = globalTrace[0];
     if (firstEntry && Number.isInteger(firstEntry.tid)) {
       const startPos = instructionIndexToPosition[firstEntry.ip].clone();
-      getOrCreateSnake(firstEntry.tid, startPos, null);
+      const s = getOrCreateSnake(firstEntry.tid, startPos, null);
       lastActiveTid = firstEntry.tid;
-      const s = snakesByTid.get(firstEntry.tid);
-      if (s) {
-        s.head.position.copy(startPos);
-        s.pointLight.position.copy(startPos);
-        s.pointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
-        s.lightTimeSincePeak = 0;
-      }
+      s.head.position.copy(startPos);
+      s.pointLight.position.copy(startPos);
+      s.pointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
+      s.lightTimeSincePeak = 0;
     }
+
+    // Build per-thread pending target queues up-front for parallel movement
+
   }
 
   function getStackDepthFromTraceEntry(entry) {
@@ -379,66 +385,69 @@
     const wupp = worldUnitsPerPixelAtDepth(depth);
     const targetTrailWorldLen = Math.max(0.01, SNAKE_MIN_TRAIL_PX * wupp);
 
-    // Move the appropriate snake toward its next ip at fixed speed
-    let remainingMove = Math.max(0, dt) * SNAKE_SPEED_UNITS_PER_SEC;
-    while (remainingMove > 0.00001 && globalTraceIndex < globalTrace.length) {
-      const currentEntry = globalTrace[globalTraceIndex];
+    // Inject new events from the global trace into per-thread queues at a steady cadence
+    eventAccumulator += Math.max(0, dt);
+    const injectEvery = 1 / Math.max(1, EVENTS_PER_SECOND);
+    while (eventAccumulator >= injectEvery && globalTraceIndex < globalTrace.length) {
+      eventAccumulator -= injectEvery;
+      const currentEntry = globalTrace[globalTraceIndex++];
       const tid = currentEntry?.tid;
       const ip = currentEntry?.ip;
-      if (!Number.isInteger(tid) || !Number.isInteger(ip)) {
-        globalTraceIndex++;
-        continue;
-      }
+      if (!Number.isInteger(tid) || !Number.isInteger(ip)) continue;
 
-      // Ensure a snake exists for this tid. If this is the first time we see this tid,
-      // clone the last active snake's path (if any) and spawn at the current location of that snake.
+      // Ensure snake exists and spawn at last active snake position for continuity
       const lastSnake = lastActiveTid != null ? snakesByTid.get(lastActiveTid) : null;
       const forkPos = lastSnake ? lastSnake.head.position.clone() : instructionIndexToPosition[ip].clone();
       const snake = getOrCreateSnake(tid, forkPos, lastSnake || null);
       lastActiveTid = tid;
 
-      // Move THIS snake to the current entry's ip
-      snake.targetPos.copy(instructionIndexToPosition[ip]);
-
-      const toTarget = new THREE.Vector3().copy(snake.targetPos).sub(snake.head.position);
-      const dist = toTarget.length();
-
-      if (dist <= remainingMove) {
-        // Snap to target and advance global trace index
-        snake.head.position.copy(snake.targetPos);
-        // Append to path
-        pushPathPointForSnake(snake, snake.head.position);
-        // Light peak on arrival
-        snake.pointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
-        snake.lightTimeSincePeak = 0;
-
-        remainingMove -= dist;
-        globalTraceIndex++;
-
-        // Highlight reached instruction
-        triggerTargetHighlight(ip);
-
-        // Update trail pixel target based on current stack depth
-        const d = getStackDepthFromTraceEntry(currentEntry);
-        snake.targetTrailPixels = Math.max(SNAKE_MIN_TRAIL_PX, d * SNAKE_PX_PER_STACK);
-      } else {
-        // Move partially towards target
-        const step = toTarget.normalize().multiplyScalar(remainingMove);
-        snake.head.position.add(step);
-        pushPathPointForSnake(snake, snake.head.position);
-        remainingMove = 0;
-        break;
-      }
+      const depthPx = Math.max(SNAKE_MIN_TRAIL_PX, getStackDepthFromTraceEntry(currentEntry) * SNAKE_PX_PER_STACK);
+      snake.pendingTargets.push({ ip, targetTrailPx: depthPx });
     }
 
-    // Update visuals per snake
+    // Move all snakes independently toward their per-thread targets at fixed speed
     snakesByTid.forEach((snake) => {
-      // Skip snakes that haven't been placed yet
       if (!snake.head) return;
+
+      let remainingMove = Math.max(0, dt) * SNAKE_SPEED_UNITS_PER_SEC;
+
+      while (remainingMove > 0.00001) {
+        if (!snake.currentEvent) {
+          if (snake.pendingTargets.length === 0) break;
+          snake.currentEvent = snake.pendingTargets.shift();
+          const pos = instructionIndexToPosition[snake.currentEvent.ip];
+          if (!pos) { snake.currentEvent = null; break; }
+          snake.targetPos.copy(pos);
+        }
+
+        const toTarget = new THREE.Vector3().copy(snake.targetPos).sub(snake.head.position);
+        const dist = toTarget.length();
+        if (dist <= remainingMove) {
+          // Arrive at target
+          snake.head.position.copy(snake.targetPos);
+          pushPathPointForSnake(snake, snake.head.position);
+          // Light and highlight
+          snake.pointLight.intensity = SNAKE_LIGHT_MAX_INTENSITY;
+          snake.lightTimeSincePeak = 0;
+          triggerTargetHighlight(snake.currentEvent.ip);
+          // Update trail target based on event's recorded stack depth
+          snake.targetTrailPixels = snake.currentEvent.targetTrailPx;
+          remainingMove -= dist;
+          snake.currentEvent = null;
+          // loop to consider next pending event within remainingMove
+        } else {
+          // Partial move toward current target
+          const step = toTarget.normalize().multiplyScalar(remainingMove);
+          snake.head.position.add(step);
+          pushPathPointForSnake(snake, snake.head.position);
+          remainingMove = 0;
+        }
+      }
 
       // Trim path to requested length for each snake
       trimPathByLengthForSnake(snake, Math.max(0.01, snake.targetTrailPixels * wupp));
 
+      // Update light position and decay
       snake.pointLight.position.copy(snake.head.position);
       if (isFinite(snake.lightTimeSincePeak)) {
         snake.lightTimeSincePeak += Math.max(0, dt);
