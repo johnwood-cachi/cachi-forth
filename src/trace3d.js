@@ -61,15 +61,15 @@
     camera.position.set(0, 0, 3);
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.1));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.3);
     dir.position.set(5, 8, 6);
     scene.add(dir);
 
     // Translucent sphere
     const geom = new THREE.SphereGeometry(1, 48, 32);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x44aaff,
+      color: 0x016164d,
       transparent: true,
       opacity: 0.07,
       metalness: 0.1,
@@ -82,7 +82,7 @@
     // Optional subtle wireframe for shape definition
     const wire = new THREE.LineSegments(
       new THREE.WireframeGeometry(geom),
-      new THREE.LineBasicMaterial({ color: 0x88ccff, opacity: 0.25, transparent: true })
+      new THREE.LineBasicMaterial({ color: 0x88ccff, opacity: 0.07, transparent: true })
     );
     sphere.add(wire);
 
