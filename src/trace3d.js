@@ -36,6 +36,9 @@
   const SNAKE_LIGHT_MAX_INTENSITY = 5.0;
   const SNAKE_LIGHT_DECAY_SECONDS = 2.0;
 
+  // Maximum allowed thread id; entries with larger TID are ignored for performance
+  const MAX_TID = 15;
+
   // Lightning tail parameters
   const LIGHTNING_BASE_AMPLITUDE = 0.035; // world units
   const LIGHTNING_STEP_LENGTH = 0.06;     // approx spacing of jitter points per segment
@@ -272,32 +275,38 @@
     // If an animation is already in progress, ignore this request and let it finish
     if (isAnimationActive()) return;
 
-    clearPoints();
-
     // Build points per PROGRAM token (instruction index)
     const tokens = getProgramTokens();
     const count = tokens.length | 0;
     if (count <= 0) return;
 
-    // Create shared geometry for tiny spheres
-    if (!sharedPointGeometry) sharedPointGeometry = new THREE.SphereGeometry(0.02, 8, 6);
+    // Reuse the existing layout if the instruction count hasn't changed
+    const canReuseLayout = (instructionIndexToPosition.length === count) && (instructionIndexToObject.size === count);
 
-    // Pre-compute positions
-    const positions = layoutPoints(count);
-    instructionIndexToPosition = positions.map(p => p.clone());
+    if (!canReuseLayout) {
+      // Clear previous points and state, then create a fresh layout
+      clearPoints();
 
-    // Neutral material color for program points
-    for (let i = 0; i < count; i++) {
-      const pos = positions[i];
-      const color = new THREE.Color(0x66ccff);
-      const mat = new THREE.MeshStandardMaterial({ color, emissive: color.clone().multiplyScalar(0.25) });
-      // Store base visual parameters for highlight blending
-      mat.userData.baseColor = color.clone();
-      mat.userData.baseEmissiveMin = 0.07;
-      const m = new THREE.Mesh(sharedPointGeometry, mat);
-      m.position.copy(pos);
-      pointsGroup.add(m);
-      instructionIndexToObject.set(i, m);
+      // Create shared geometry for tiny spheres
+      if (!sharedPointGeometry) sharedPointGeometry = new THREE.SphereGeometry(0.02, 8, 6);
+
+      // Pre-compute positions
+      const positions = layoutPoints(count);
+      instructionIndexToPosition = positions.map(p => p.clone());
+
+      // Neutral material color for program points
+      for (let i = 0; i < count; i++) {
+        const pos = positions[i];
+        const color = new THREE.Color(0x66ccff);
+        const mat = new THREE.MeshStandardMaterial({ color, emissive: color.clone().multiplyScalar(0.25) });
+        // Store base visual parameters for highlight blending
+        mat.userData.baseColor = color.clone();
+        mat.userData.baseEmissiveMin = 0.07;
+        const m = new THREE.Mesh(sharedPointGeometry, mat);
+        m.position.copy(pos);
+        pointsGroup.add(m);
+        instructionIndexToObject.set(i, m);
+      }
     }
 
     // Start snake animation over the provided execution trace
@@ -402,7 +411,13 @@
     if (!Array.isArray(trace) || trace.length === 0) return;
 
     // Filter to entries that have a valid instruction index
-    globalTrace = trace.filter(e => Number.isInteger(e?.ip) && instructionIndexToPosition[e.ip] != null);
+    globalTrace = trace.filter((e) => {
+      const ipValid = Number.isInteger(e?.ip) && instructionIndexToPosition[e.ip] != null;
+      if (!ipValid) return false;
+      const tid = e?.tid;
+      if (Number.isInteger(tid) && tid > MAX_TID) return false;
+      return true;
+    });
     if (globalTrace.length === 0) return;
 
     // Reset parallel scheduler state
