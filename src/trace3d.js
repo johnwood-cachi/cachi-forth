@@ -510,7 +510,7 @@
       const snake = getOrCreateSnake(tid, forkPos, lastSnake || null);
       lastActiveTid = tid;
 
-      const depthPx = Math.max(SNAKE_MIN_TRAIL_PX, getStackDepthFromTraceEntry(currentEntry) * SNAKE_PX_PER_STACK);
+      let depthPx = Math.max(SNAKE_MIN_TRAIL_PX, getStackDepthFromTraceEntry(currentEntry) * SNAKE_PX_PER_STACK);
       if (depthPx > SNAKE_MAX_TRAIL_PX) depthPx = SNAKE_MAX_TRAIL_PX;
       snake.pendingTargets.push({ tid, ip, targetTrailPx: depthPx });
     }
