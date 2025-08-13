@@ -673,8 +673,8 @@
       if (snake.lightningBolts) snake.lightningBolts.forEach(l => { if (l) l.visible = false; });
       return;
     }
-    const pts1 = buildLightningPointsForPath(snake.pathPositions, 2.0, LIGHTNING_STEP_LENGTH);
-    const pts2 = buildLightningPointsForPath(snake.pathPositions, 1.00, LIGHTNING_STEP_LENGTH * 1.2);
+    const pts1 = buildLightningPointsForPath(snake.pathPositions, 4.0, LIGHTNING_STEP_LENGTH);
+    const pts2 = buildLightningPointsForPath(snake.pathPositions, 3.00, LIGHTNING_STEP_LENGTH * 1.2);
     if (snake.lightningBolts[0]) {
       snake.lightningBolts[0].visible = pts1.length > 1;
       snake.lightningBolts[0].geometry.setFromPoints(pts1);
