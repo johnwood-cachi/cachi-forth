@@ -282,9 +282,9 @@
   function ensureSnakeLight() {
     if (snakePointLight) return;
     // Warm point light that affects nearby objects; parent to snakeGroup so it rotates with the sphere
-    snakePointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
+    /* snakePointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
     snakePointLight.castShadow = false;
-    snakeGroup.add(snakePointLight);
+    snakeGroup.add(snakePointLight); */
   }
 
   function ensureTrailSprites(n) {
