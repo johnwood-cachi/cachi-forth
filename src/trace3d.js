@@ -61,7 +61,7 @@
     camera.position.set(0, 0, 3);
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.1));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.01));
     const dir = new THREE.DirectionalLight(0xffffff, 0.3);
     dir.position.set(5, 8, 6);
     scene.add(dir);
