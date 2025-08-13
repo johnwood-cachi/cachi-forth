@@ -1213,7 +1213,7 @@ function recomputeCostDataForCode(codeStr) {
     const noppedSteps = stepCount;
     const noppedCost = len * noppedSteps;
     const percent = originalCost > 0 ? ((originalCost - noppedCost) / originalCost) * 100 : 0;
-    costData[i] = percent;
+    costData[i] = Math.abs(percent);
   }
 
   stepCount = prevStepCount;
