@@ -5,7 +5,7 @@
   }
 
   // shared state for the widget
-  let container, renderer, scene, camera, sphere;
+  let container, renderer, scene, camera, sphere, backdropPlane;
   let pointsGroup;
   const traceIndexToObject = new Map();
   let sharedPointGeometry = null;
@@ -86,6 +86,29 @@
     dir.position.set(5, 8, 6);
     scene.add(dir);
 
+    // Backdrop plane behind the sphere to catch light
+    const BACKDROP_Z = -1.3;
+    backdropPlane = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshStandardMaterial({
+        color: 0x000000,
+        metalness: 0.0,
+        roughness: 0.15
+      })
+    );
+    backdropPlane.position.set(0, 0, BACKDROP_Z);
+    backdropPlane.frustumCulled = false;
+    scene.add(backdropPlane);
+
+    function updateBackdropPlaneSize() {
+      if (!backdropPlane || !camera) return;
+      const distance = Math.max(0.001, camera.position.z - (backdropPlane.position.z || 0));
+      const vFov = THREE.MathUtils.degToRad(camera.fov);
+      const height = 2 * Math.tan(vFov / 2) * distance;
+      const width = height * Math.max(1e-6, camera.aspect);
+      backdropPlane.scale.set(width, height, 1);
+    }
+
     // Translucent sphere
     const geom = new THREE.SphereGeometry(1, 48, 32);
     const mat = new THREE.MeshStandardMaterial({
@@ -145,6 +168,7 @@
       renderer.setSize(w, h, false);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      updateBackdropPlaneSize();
     }
 
     const ro = new ResizeObserver(resize);
@@ -161,6 +185,10 @@
       renderer.dispose();
       geom.dispose();
       mat.dispose();
+      if (backdropPlane) {
+        backdropPlane.geometry?.dispose?.();
+        backdropPlane.material?.dispose?.();
+      }
     });
   }
 
