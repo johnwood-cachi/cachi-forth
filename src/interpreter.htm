@@ -36,6 +36,7 @@
 &nbsp;|&nbsp;@last:&nbsp;<span id="lastCount">0</span>
     &nbsp;|&nbsp;Steps:&nbsp;<span id="stepCount">0</span>
     &nbsp;|&nbsp;Cost:&nbsp;<span id="cost">0</span>
+    &nbsp;|&nbsp;<span id="hoverInstructionLabel" style="display:none">Instruction:&nbsp;<span id="instructionText"></span></span>
   </div>
   <div class="graph-trace-row">
     <svg id="graph"></svg>
@@ -1224,6 +1225,39 @@ window.onload = () => {
 	updateMutCount();   // initialise counter to 0 on first load
   const progEl = document.getElementById("program");
   if (progEl) progEl.addEventListener('input', () => { resetAgeDataForProgram(); });
+	// show Instruction label when hovering over the heatmap and update based on X
+	const graph = document.getElementById("graph");
+	if (graph) {
+		graph.addEventListener("mouseenter", () => {
+			const el = document.getElementById("hoverInstructionLabel");
+			if (el) el.style.display = "inline";
+		});
+		graph.addEventListener("mouseleave", () => {
+			const el = document.getElementById("hoverInstructionLabel");
+			if (el) el.style.display = "none";
+			const t = document.getElementById("instructionText");
+			if (t) t.textContent = "";
+		});
+		graph.addEventListener("mousemove", (e) => {
+			const ta = document.getElementById("program");
+			const labelEl = document.getElementById("hoverInstructionLabel");
+			if (!ta || !labelEl) return;
+			const tokens = ta.value.trim() ? ta.value.trim().split(/\s+/) : [];
+			if (tokens.length === 0) {
+				labelEl.style.display = "none";
+				return;
+			}
+			const rect = graph.getBoundingClientRect();
+			const W = rect.width || graph.clientWidth || 1;
+			let x = e.clientX - rect.left;
+			if (x < 0) x = 0;
+			if (x > W) x = W;
+			const idx = Math.min(tokens.length - 1, Math.max(0, Math.floor(x / (W / tokens.length))));
+			const t = document.getElementById("instructionText");
+			if (t) t.textContent = tokens[idx] || "";
+			labelEl.style.display = "inline";
+		});
+	}
 };
 </script> 
 <!-- include three.js and the trace3d widget -->
