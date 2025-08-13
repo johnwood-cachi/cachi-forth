@@ -16,7 +16,7 @@
   // Target highlight state
   const instructionIndexToHighlightTime = new Map(); // seconds since last hit (0..duration)
   const TARGET_HIGHLIGHT_DURATION = 1.0; // seconds
-  const TARGET_HIGHLIGHT_COLOR = new THREE.Color(0xaaddff); // bright light blue
+  const TARGET_HIGHLIGHT_COLOR = new THREE.Color(0xff8800); // bright orange
 
   // Snake animation state
   let snakeGroup = null;
