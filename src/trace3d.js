@@ -521,9 +521,9 @@
       const f = 1 - t; // 1 at hit, 0 at end
       // Color fades from highlight to base
       mat.color.copy(baseColor).lerp(TARGET_HIGHLIGHT_COLOR, f);
-      // Emissive brightness fades from strong to base
+      // Emissive brightness and hue fade from highlight to base
       const emissiveFactor = baseEmissiveMin + (1.0 - baseEmissiveMin) * f;
-      mat.emissive.copy(baseColor).multiplyScalar(emissiveFactor);
+      mat.emissive.copy(baseColor).lerp(TARGET_HIGHLIGHT_COLOR, f).multiplyScalar(emissiveFactor);
 
       if (t >= 1) {
         // Restore base and stop tracking
