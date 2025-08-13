@@ -12,6 +12,11 @@
   // New: per-instruction map and positions
   const instructionIndexToObject = new Map();
   let instructionIndexToPosition = [];
+  
+  // Target highlight state
+  const instructionIndexToHighlightTime = new Map(); // seconds since last hit (0..duration)
+  const TARGET_HIGHLIGHT_DURATION = 1.0; // seconds
+  const TARGET_HIGHLIGHT_COLOR = new THREE.Color(0xaaddff); // bright light blue
 
   // Snake animation state
   let snakeGroup = null;
@@ -186,6 +191,7 @@
     instructionIndexToObject.clear();
     instructionIndexToPosition = [];
     clearSnake();
+    instructionIndexToHighlightTime.clear();
   }
 
   function clearSnake() {
@@ -239,6 +245,9 @@
       const pos = positions[i];
       const color = new THREE.Color(0x66ccff);
       const mat = new THREE.MeshStandardMaterial({ color, emissive: color.clone().multiplyScalar(0.15) });
+      // Store base visual parameters for highlight blending
+      mat.userData.baseColor = color.clone();
+      mat.userData.baseEmissiveMin = 0.15;
       const m = new THREE.Mesh(sharedPointGeometry, mat);
       m.position.copy(pos);
       pointsGroup.add(m);
@@ -357,6 +366,11 @@
         }
         remainingMove -= dist;
         snakeTraceIndex++;
+        // Trigger highlight on the instruction we just reached
+        if (snakeTrace.length > 0) {
+          const reachedEntry = snakeTrace[Math.min(snakeTraceIndex, snakeTrace.length - 1)];
+          if (Number.isInteger(reachedEntry?.ip)) triggerTargetHighlight(reachedEntry.ip);
+        }
         if (snakeTraceIndex < snakeTrace.length - 1) {
           const e = snakeTrace[snakeTraceIndex];
           const eNext = snakeTrace[snakeTraceIndex + 1];
@@ -405,6 +419,9 @@
       snakeHead.material.emissiveIntensity = 0.2 + 0.8 * headFactor;
     }
     updateTrailSprites(targetTrailWorldLen);
+
+    // Update target highlight fades
+    updateTargetHighlights(dt);
   }
 
   function pushPathPoint(vec) {
@@ -480,6 +497,44 @@
         spr.material.opacity = 0.85 * Math.pow(alpha, 1.5);
       }
     }
+  }
+
+  function triggerTargetHighlight(instructionIndex) {
+    if (!Number.isInteger(instructionIndex)) return;
+    instructionIndexToHighlightTime.set(instructionIndex, 0);
+  }
+
+  function updateTargetHighlights(dt) {
+    if (instructionIndexToHighlightTime.size === 0) return;
+    const toDelete = [];
+    instructionIndexToHighlightTime.forEach((elapsed, idx) => {
+      const mesh = instructionIndexToObject.get(idx);
+      if (!mesh || !mesh.material) {
+        toDelete.push(idx);
+        return;
+      }
+      const mat = mesh.material;
+      const baseColor = mat.userData?.baseColor || new THREE.Color(0x66ccff);
+      const baseEmissiveMin = mat.userData?.baseEmissiveMin ?? 0.15;
+      const newElapsed = elapsed + Math.max(0, dt);
+      const t = Math.min(1, newElapsed / Math.max(1e-6, TARGET_HIGHLIGHT_DURATION));
+      const f = 1 - t; // 1 at hit, 0 at end
+      // Color fades from highlight to base
+      mat.color.copy(baseColor).lerp(TARGET_HIGHLIGHT_COLOR, f);
+      // Emissive brightness fades from strong to base
+      const emissiveFactor = baseEmissiveMin + (1.0 - baseEmissiveMin) * f;
+      mat.emissive.copy(baseColor).multiplyScalar(emissiveFactor);
+
+      if (t >= 1) {
+        // Restore base and stop tracking
+        mat.color.copy(baseColor);
+        mat.emissive.copy(baseColor).multiplyScalar(baseEmissiveMin);
+        toDelete.push(idx);
+      } else {
+        instructionIndexToHighlightTime.set(idx, newElapsed);
+      }
+    });
+    for (const idx of toDelete) instructionIndexToHighlightTime.delete(idx);
   }
 
   // expose API
