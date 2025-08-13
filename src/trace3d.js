@@ -68,6 +68,7 @@
     renderer.setSize(container.clientWidth, container.clientHeight, false);
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
+    renderer.domElement.style.touchAction = 'none';
     container.appendChild(renderer.domElement);
 
     // Scene and camera
@@ -147,6 +148,78 @@
     snakeGroup = new THREE.Group();
     sphere.add(snakeGroup);
 
+    // Interaction state and handlers (pan left/right, pinch-zoom)
+    let isUserInteracting = false;
+    const activePointers = new Map();
+    let lastSinglePointerX = 0;
+    let pinchStartDistance = 0;
+    let pinchStartZ = 0;
+    const MIN_Z = 1.4;
+    const MAX_Z = 10.0;
+
+    function onPointerDown(e) {
+      isUserInteracting = true;
+      try { renderer.domElement.setPointerCapture && renderer.domElement.setPointerCapture(e.pointerId); } catch (_) {}
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (activePointers.size === 1) {
+        lastSinglePointerX = e.clientX;
+      } else if (activePointers.size === 2) {
+        const pts = Array.from(activePointers.values());
+        pinchStartDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        pinchStartZ = camera.position.z;
+      }
+      e.preventDefault();
+    }
+
+    function onPointerMove(e) {
+      const prev = activePointers.get(e.pointerId);
+      if (!prev) return;
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (activePointers.size === 1) {
+        const dx = e.clientX - lastSinglePointerX;
+        lastSinglePointerX = e.clientX;
+        const ROTATE_SPEED = 0.005;
+        if (Number.isFinite(dx)) sphere.rotation.y += dx * ROTATE_SPEED;
+        e.preventDefault();
+      } else if (activePointers.size === 2) {
+        const pts = Array.from(activePointers.values());
+        const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        if (pinchStartDistance > 0) {
+          const scale = d / pinchStartDistance;
+          let z = pinchStartZ / Math.max(0.01, scale);
+          z = Math.max(MIN_Z, Math.min(MAX_Z, z));
+          camera.position.z = z;
+          updateBackdropPlaneSize();
+        }
+        e.preventDefault();
+      }
+    }
+
+    function onPointerUp(e) {
+      try { renderer.domElement.releasePointerCapture && renderer.domElement.releasePointerCapture(e.pointerId); } catch (_) {}
+      activePointers.delete(e.pointerId);
+      if (activePointers.size < 2) {
+        pinchStartDistance = 0;
+      }
+      if (activePointers.size === 1) {
+        const remaining = Array.from(activePointers.values())[0];
+        if (remaining) lastSinglePointerX = remaining.x;
+      }
+      if (activePointers.size === 0) {
+        isUserInteracting = false;
+      }
+    }
+
+    function onWheel(e) {
+      e.preventDefault();
+      const factor = Math.exp((e.deltaY || 0) * 0.001);
+      let z = camera.position.z * factor;
+      z = Math.max(MIN_Z, Math.min(MAX_Z, z));
+      camera.position.z = z;
+      updateBackdropPlaneSize();
+    }
+
     // Animation loop
     let animId = 0;
     let prevTimeMs = performance.now();
@@ -155,8 +228,11 @@
       const now = performance.now();
       const dt = Math.max(0, (now - prevTimeMs) / 1000);
       prevTimeMs = now;
-      sphere.rotation.y += 0.01;
-      sphere.rotation.x += 0.005;
+      const autoY = isUserInteracting ? 0 : 0.01;
+      const autoX = isUserInteracting ? 0 : 0.005;
+      sphere.rotation.y += autoY;
+      sphere.rotation.x += autoX;
+      updateBackdropPlaneSize();
       updateSnakes(dt);
       renderer.render(scene, camera);
     }
@@ -178,10 +254,22 @@
     resize();
     animate();
 
+    // Input listeners
+    renderer.domElement.addEventListener('pointerdown', onPointerDown);
+    renderer.domElement.addEventListener('pointermove', onPointerMove);
+    renderer.domElement.addEventListener('pointerup', onPointerUp);
+    renderer.domElement.addEventListener('pointercancel', onPointerUp);
+    renderer.domElement.addEventListener('wheel', onWheel, { passive: false });
+
     // Cleanup on unload
     window.addEventListener('beforeunload', () => {
       cancelAnimationFrame(animId);
       ro.disconnect();
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      renderer.domElement.removeEventListener('pointermove', onPointerMove);
+      renderer.domElement.removeEventListener('pointerup', onPointerUp);
+      renderer.domElement.removeEventListener('pointercancel', onPointerUp);
+      renderer.domElement.removeEventListener('wheel', onWheel);
       renderer.dispose();
       geom.dispose();
       mat.dispose();
