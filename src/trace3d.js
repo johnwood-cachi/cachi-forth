@@ -36,6 +36,13 @@
   const SNAKE_LIGHT_MAX_INTENSITY = 5.0;
   const SNAKE_LIGHT_DECAY_SECONDS = 2.0;
 
+  // Lightning tail parameters
+  const LIGHTNING_BASE_AMPLITUDE = 0.035; // world units
+  const LIGHTNING_STEP_LENGTH = 0.06;     // approx spacing of jitter points per segment
+  const LIGHTNING_MAX_SUBDIVISIONS = 5;
+  const LIGHTNING_COLORS = [0x99ddff, 0x66aaff];
+  const LIGHTNING_OPACITIES = [0.9, 0.6];
+
   // Parallel animation scheduling
   let eventAccumulator = 0;
   const EVENTS_PER_SECOND = 60;
@@ -166,6 +173,23 @@
     // Uniform radius in volume
     const r = Math.cbrt(Math.random());
     return new THREE.Vector3(x * r, y * r, z * r);
+  }
+
+  // Lightning helper: produce a random unit vector perpendicular to normal
+  function randomPerpendicularVectorTo(normal) {
+    const n = new THREE.Vector3().copy(normal).normalize();
+    let r = randomPointInUnitSphere();
+    if (Math.abs(r.dot(n)) > 0.95) {
+      r = new THREE.Vector3(1, 0, 0);
+      if (Math.abs(n.x) > 0.9) r.set(0, 1, 0);
+    }
+    const v = r.sub(n.clone().multiplyScalar(r.dot(n)));
+    if (v.lengthSq() < 1e-6) {
+      if (Math.abs(n.x) < 0.9) v.set(1, 0, 0).sub(n.clone().multiplyScalar(n.x));
+      else v.set(0, 1, 0).sub(n.clone().multiplyScalar(n.y));
+    }
+    v.normalize();
+    return v;
   }
 
   // Semi-random layout that progressively spreads points throughout the sphere interior
@@ -320,6 +344,7 @@
       head,
       pointLight,
       trailSprites: [],
+      lightningBolts: [],
       pathPositions: initialPath,
       targetTrailPixels: SNAKE_MIN_TRAIL_PX,
       lightTimeSincePeak: Infinity,
@@ -349,6 +374,26 @@
       const spr = snake.trailSprites.pop();
       snake.group.remove(spr);
       spr.material.dispose?.();
+    }
+  }
+
+  // Ensure the two lightning bolts exist on the snake
+  function ensureLightningBoltsForSnake(snake) {
+    if (Array.isArray(snake.lightningBolts) && snake.lightningBolts.length === 2) return;
+    snake.lightningBolts = [];
+    for (let i = 0; i < 2; i++) {
+      const material = new THREE.LineBasicMaterial({
+        color: LIGHTNING_COLORS[i] || 0x99ddff,
+        transparent: true,
+        opacity: LIGHTNING_OPACITIES[i] || 0.8,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      const geometry = new THREE.BufferGeometry();
+      const line = new THREE.Line(geometry, material);
+      line.frustumCulled = false;
+      snake.group.add(line);
+      snake.lightningBolts.push(line);
     }
   }
 
@@ -489,8 +534,8 @@
         snake.head.material.emissiveIntensity = 0.2 + 0.8 * headFactor;
       }
 
-      // Trail sprites
-      updateTrailSpritesForSnake(snake, Math.max(0.01, snake.targetTrailPixels * wupp));
+      // Lightning trail
+      updateLightningBoltsForSnake(snake, Math.max(0.01, snake.targetTrailPixels * wupp));
 
       // If this snake has fully finished its events and has no more pending work, mark for removal
       const remainingForTid = remainingEventsByTid.get(snake.tid) || 0;
@@ -570,6 +615,56 @@
         const alpha = Math.max(0, 1 - frac);
         spr.material.opacity = 0.85 * Math.pow(alpha, 1.5);
       }
+    }
+  }
+
+  // Build a jagged lightning polyline that follows the snake path, with random
+  // perpendicular offsets that always start and end exactly at each path segment's ends
+  function buildLightningPointsForPath(pathPositions, amplitudeScale, stepLen) {
+    const out = [];
+    const n = pathPositions.length;
+    if (n < 2) return out;
+    for (let i = 0; i < n - 1; i++) {
+      const p0 = pathPositions[i];
+      const p1 = pathPositions[i + 1];
+      const seg = new THREE.Vector3().subVectors(p1, p0);
+      const segLen = seg.length();
+      out.push(p0.clone());
+      if (segLen > 1e-6) {
+        const dir = seg.clone().divideScalar(segLen);
+        const maxSubs = LIGHTNING_MAX_SUBDIVISIONS;
+        const subs = Math.max(1, Math.min(maxSubs, Math.round(segLen / Math.max(1e-6, stepLen))));
+        for (let s = 1; s < subs; s++) {
+          const t = s / subs;
+          const base = new THREE.Vector3().lerpVectors(p0, p1, t);
+          const perp = randomPerpendicularVectorTo(dir);
+          const headProximity = (i + t) / Math.max(1, n - 1);
+          const amp = LIGHTNING_BASE_AMPLITUDE * amplitudeScale * (0.4 + 0.6 * headProximity) * (0.6 + 0.4 * Math.random());
+          base.add(perp.multiplyScalar((Math.random() * 2 - 1) * amp));
+          out.push(base);
+        }
+      }
+      out.push(p1.clone());
+    }
+    return out;
+  }
+
+  function updateLightningBoltsForSnake(snake, targetLen) {
+    ensureLightningBoltsForSnake(snake);
+    const hasPath = Array.isArray(snake.pathPositions) && snake.pathPositions.length > 1;
+    if (!hasPath) {
+      if (snake.lightningBolts) snake.lightningBolts.forEach(l => { if (l) l.visible = false; });
+      return;
+    }
+    const pts1 = buildLightningPointsForPath(snake.pathPositions, 1.0, LIGHTNING_STEP_LENGTH);
+    const pts2 = buildLightningPointsForPath(snake.pathPositions, 0.65, LIGHTNING_STEP_LENGTH * 1.2);
+    if (snake.lightningBolts[0]) {
+      snake.lightningBolts[0].visible = pts1.length > 1;
+      snake.lightningBolts[0].geometry.setFromPoints(pts1);
+    }
+    if (snake.lightningBolts[1]) {
+      snake.lightningBolts[1].visible = pts2.length > 1;
+      snake.lightningBolts[1].geometry.setFromPoints(pts2);
     }
   }
 
@@ -655,6 +750,18 @@
         }
       }
       snake.trailSprites.length = 0;
+    }
+    // Remove lightning bolts
+    if (Array.isArray(snake.lightningBolts)) {
+      for (let i = 0; i < snake.lightningBolts.length; i++) {
+        const line = snake.lightningBolts[i];
+        if (line) {
+          snake.group.remove(line);
+          line.geometry?.dispose?.();
+          line.material?.dispose?.();
+        }
+      }
+      snake.lightningBolts.length = 0;
     }
     // Remove head
     if (snake.head) {
