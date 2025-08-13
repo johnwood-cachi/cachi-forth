@@ -298,11 +298,11 @@
       // Neutral material color for program points
       for (let i = 0; i < count; i++) {
         const pos = positions[i];
-        const color = new THREE.Color(0x66ccff);
+        const color = new THREE.Color(0x03b9ad9);
         const mat = new THREE.MeshStandardMaterial({ color, emissive: color.clone().multiplyScalar(0.25) });
         // Store base visual parameters for highlight blending
         mat.userData.baseColor = color.clone();
-        mat.userData.baseEmissiveMin = 0.07;
+        mat.userData.baseEmissiveMin = 0.01;
         const m = new THREE.Mesh(sharedPointGeometry, mat);
         m.position.copy(pos);
         pointsGroup.add(m);
