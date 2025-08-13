@@ -75,6 +75,10 @@ const PERTURBATION_RUNS = 100;
 const PI_TOTAL_TIMEOUT_MS = 8000; // total time cap for a full PI computation
 const PI_MIN_TRIALS = 10;         // require at least this many samples per side
 	
+// Global per-instruction arrays
+let ageData = [];
+let costData = [];
+
 const splitTok = t => {
 	if (t==null) return [ "", "" ];
   const idx = t.indexOf(':');
@@ -172,6 +176,7 @@ function generateRandomProgram() {
 	while (toks.length < tot - defs.join(" ").split(/\s+/).length - 2) toks.push(randToken(active));
 	toks.push("out", "end");
 	document.getElementById("program").value = defs.join("\n") + "\n" + toks.join(" ");
+  resetAgeDataForProgram();
 	runProgram();
 }
 
@@ -201,9 +206,38 @@ function updateMetricsView (len, cc, lastCount) {
   if (lastEl) lastEl.textContent = lastCount || 0;
 }
 
+// Count tokens in a code string
+function countTokens(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
 function updateMutCount () {
   const el = document.getElementById("mutCount");
   if (el) el.textContent = mutCount;
+}
+
+// Age data helpers
+function ensureAgeArraySized(len) {
+  if (ageData.length !== len) ageData = new Array(len).fill(0);
+}
+function resetAgeDataForProgram() {
+  const ta = document.getElementById("program");
+  const len = countTokens(ta ? ta.value : "");
+  ageData = new Array(len).fill(0);
+}
+function updateAgeDataOnMutation(len, mutatedIndexSet) {
+  ensureAgeArraySized(len);
+  const maxAge = 300;
+  for (let i = 0; i < len; i++) {
+    const isMutated = mutatedIndexSet && (typeof mutatedIndexSet.has === 'function' ? mutatedIndexSet.has(i) : (Array.isArray(mutatedIndexSet) && mutatedIndexSet.includes(i)));
+    if (isMutated) {
+      ageData[i] = 0;
+    } else {
+      ageData[i] = Math.min(maxAge, (ageData[i] || 0) + 1);
+    }
+  }
 }
 
 let inertiaVal = 0;                // last-measured inertia (resistance to change)
@@ -236,6 +270,7 @@ function toggleAuto () {
   // ----- START -----
   btn.textContent = "Stop";
   targetSteps = stepCount;
+  resetAgeDataForProgram();
   try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
   autoTimer = setInterval(() => {
     const lost = Object.values(LABELS).some(v => v === -1);
@@ -720,6 +755,8 @@ frameRef.idx = start;
   if (!dryRun) updateMetricsView(len, cc, lastCount);
 	// Append this run's output and trace to rolling history (cap at 20, 0 = most recent)
   if (!dryRun) {
+    // Ensure age array matches current program length
+    ensureAgeArraySized(len);
  	outputHistory.push([...out]);
  	outputInertia.push(inertiaVal || 0);
  	outputColorHistory.push([]);
@@ -733,6 +770,8 @@ frameRef.idx = start;
     if (traceHistory.length > 20) traceHistory.shift();
     drawGraph();
     updateLabelsView();
+    // Recompute costData on every non-dry run
+    recomputeCostDataForCode(src);
   }
 	return out.join(" ");
 }
@@ -866,6 +905,9 @@ function mutateProgram() {
         inertiaHist.push(inertiaVal);
         if (inertiaHist.length > INERTIA_WINDOW) inertiaHist.shift();
         updateInertia();
+
+        // Update age data: reset mutated indices to 0, increment others (max 300)
+        updateAgeDataOnMutation(origLen, indices);
 
         document.getElementById("program").value = newCode;
         runProgram();
@@ -1126,6 +1168,37 @@ function computeSelectedCost() {
   alert(percent.toFixed(2) + '%');
 }
 
+// Compute costData per-instruction via dry runs
+function recomputeCostDataForCode(codeStr) {
+  const toks = (codeStr || '').trim() ? codeStr.trim().split(/\s+/) : [];
+  const len = toks.length;
+  costData = new Array(len).fill(0);
+  if (len === 0) return;
+
+  const prevStepCount = stepCount;
+  const prevTargetSteps = targetSteps;
+  const prevBitCounter = bitCounter;
+
+  runWithOutput(codeStr, false, { dryRun: true });
+  const originalSteps = stepCount;
+  const originalCost = len * originalSteps;
+
+  for (let i = 0; i < len; i++) {
+    const mutated = toks.slice();
+    mutated[i] = 'nop';
+    const mutatedText = mutated.join(' ');
+    runWithOutput(mutatedText, false, { dryRun: true });
+    const noppedSteps = stepCount;
+    const noppedCost = len * noppedSteps;
+    const percent = originalCost > 0 ? ((originalCost - noppedCost) / originalCost) * 100 : 0;
+    costData[i] = percent;
+  }
+
+  stepCount = prevStepCount;
+  targetSteps = prevTargetSteps;
+  bitCounter = prevBitCounter;
+}
+
 
 window.onload = () => {
 	const sp = new URLSearchParams(location.search);
@@ -1135,6 +1208,8 @@ window.onload = () => {
 		setTimeout(runProgram, 0);
 	}
 	updateMutCount();   // initialise counter to 0 on first load
+  const progEl = document.getElementById("program");
+  if (progEl) progEl.addEventListener('input', () => { resetAgeDataForProgram(); });
 };
 </script> 
 <!-- include three.js and the trace3d widget -->
