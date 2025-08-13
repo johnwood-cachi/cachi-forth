@@ -71,7 +71,7 @@
     const mat = new THREE.MeshStandardMaterial({
       color: 0x44aaff,
       transparent: true,
-      opacity: 0.15,
+      opacity: 0.07,
       metalness: 0.1,
       roughness: 0.2,
       depthWrite: false
@@ -244,10 +244,10 @@
     for (let i = 0; i < count; i++) {
       const pos = positions[i];
       const color = new THREE.Color(0x66ccff);
-      const mat = new THREE.MeshStandardMaterial({ color, emissive: color.clone().multiplyScalar(0.15) });
+      const mat = new THREE.MeshStandardMaterial({ color, emissive: color.clone().multiplyScalar(0.25) });
       // Store base visual parameters for highlight blending
       mat.userData.baseColor = color.clone();
-      mat.userData.baseEmissiveMin = 0.15;
+      mat.userData.baseEmissiveMin = 0.07;
       const m = new THREE.Mesh(sharedPointGeometry, mat);
       m.position.copy(pos);
       pointsGroup.add(m);
