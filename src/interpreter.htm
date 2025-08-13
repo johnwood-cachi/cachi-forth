@@ -59,6 +59,9 @@ let LABELS = {};   // label-string  -> tokenIndex (-1 = missing)
 let EXECUTION_TRACE = [];
 const palette = ["#ff0", "#f0f", "#0ff", "#f80", "#0f0", "#08f", "#f44", "#fff", "#ccc", "#faa"];
 let traceHistory = [];
+let graphHistory = [];
+const MAX_GRAPH_ROWS = 50;
+const GRAPH_ROW_HEIGHT = 12;
 
 let autoTimer   = null;   // holds setInterval handle
 let mutCount    = 0;      // shown in UI
@@ -308,21 +311,14 @@ function drawGraph() {
 	const tokens = ta && ta.value.trim() ? ta.value.trim().split(/\s+/) : [];
 	const n = tokens.length;
 
-	if (n === 0) {
+	// If no history yet and no tokens, nothing to draw
+	if (graphHistory.length === 0 && n === 0) {
 		svg.innerHTML = "";
 		svg.style.height = "0px";
 		return;
 	}
 
-	// Ensure per-instruction arrays match current program length
-	ensureAgeArraySized(n);
-	if (!costData || costData.length !== n) {
-		costData = new Array(n).fill(0);
-	}
-
 	const W = svg.clientWidth || 600;
-	const H = 30;
-	const step = W / n;
 
 	function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 	function costToColor(percent) {
@@ -338,14 +334,41 @@ function drawGraph() {
 	}
 
 	let g = "";
-	for (let i = 0; i < n; i++) {
-		const x = i * step;
-		const col = costToColor(costData[i] || 0);
-		const a = ageToOpacity(ageData[i] || 0);
-		g += `<rect x='${x}' y='0' width='${Math.max(1, step - 1)}' height='${H}' fill='${col}' fill-opacity='${a}'></rect>`;
+
+	if (graphHistory.length === 0) {
+		// Fallback: draw current single row
+		// Ensure per-instruction arrays match current program length
+		ensureAgeArraySized(n);
+		if (!costData || costData.length !== n) costData = new Array(n).fill(0);
+		const step = n > 0 ? (W / n) : W;
+		for (let i = 0; i < n; i++) {
+			const x = i * step;
+			const col = costToColor(costData[i] || 0);
+			const a = ageToOpacity(ageData[i] || 0);
+			g += `<rect x='${x}' y='0' width='${Math.max(1, step - 1)}' height='${GRAPH_ROW_HEIGHT}' fill='${col}' fill-opacity='${a}'></rect>`;
+		}
+		svg.style.height = `${GRAPH_ROW_HEIGHT}px`;
+		svg.innerHTML = g;
+		return;
 	}
 
-	svg.style.height = `${H}px`;
+	// Draw multiple rows from history; newest row is at index 0 (top)
+	const rows = Math.min(graphHistory.length, MAX_GRAPH_ROWS);
+	for (let r = 0; r < rows; r++) {
+		const entry = graphHistory[r];
+		const len = entry && Array.isArray(entry.costs) ? entry.costs.length : 0;
+		if (len === 0) continue;
+		const step = W / len;
+		const y = r * GRAPH_ROW_HEIGHT;
+		for (let i = 0; i < len; i++) {
+			const x = i * step;
+			const col = costToColor(entry.costs[i] || 0);
+			const a = ageToOpacity(entry.ages[i] || 0);
+			g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${GRAPH_ROW_HEIGHT}' fill='${col}' fill-opacity='${a}'></rect>`;
+		}
+	}
+
+	svg.style.height = `${rows * GRAPH_ROW_HEIGHT}px`;
 	svg.innerHTML = g;
 }
 
@@ -747,6 +770,9 @@ frameRef.idx = start;
     ensureAgeArraySized(len);
     // Recompute costData on every non-dry run before drawing
     recomputeCostDataForCode(src);
+    // Snapshot current heat map entry and unshift to top
+    graphHistory.unshift({ costs: [...costData], ages: [...ageData] });
+    if (graphHistory.length > MAX_GRAPH_ROWS) graphHistory.pop();
  	outputHistory.push([...out]);
  	outputInertia.push(inertiaVal || 0);
  	outputColorHistory.push([]);
