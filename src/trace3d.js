@@ -69,22 +69,30 @@
     // Translucent sphere
     const geom = new THREE.SphereGeometry(1, 48, 32);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x016164d,
+      color: 0x06164d,
       transparent: true,
-      opacity: 0.07,
-      metalness: 0.1,
-      roughness: 0.2,
+      opacity: 0.05,
+      metalness: 0.2,
+      roughness: 0.35,
       depthWrite: false
     });
     sphere = new THREE.Mesh(geom, mat);
     scene.add(sphere);
 
-    // Optional subtle wireframe for shape definition
-    const wire = new THREE.LineSegments(
-      new THREE.WireframeGeometry(geom),
-      new THREE.LineBasicMaterial({ color: 0x88ccff, opacity: 0.07, transparent: true })
+    // Lit wireframe that responds to interior lights
+    const wireMesh = new THREE.Mesh(
+      geom,
+      new THREE.MeshStandardMaterial({
+        color: 0x88ccff,
+        transparent: true,
+        opacity: 0.25,
+        metalness: 0.6,
+        roughness: 0.2,
+        wireframe: true,
+        depthWrite: false
+      })
     );
-    sphere.add(wire);
+    sphere.add(wireMesh);
 
     // Points container (tethered to sphere so it rotates together)
     pointsGroup = new THREE.Group();
@@ -282,9 +290,9 @@
   function ensureSnakeLight() {
     if (snakePointLight) return;
     // Warm point light that affects nearby objects; parent to snakeGroup so it rotates with the sphere
-    /* snakePointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
+    snakePointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
     snakePointLight.castShadow = false;
-    snakeGroup.add(snakePointLight); */
+    snakeGroup.add(snakePointLight);
   }
 
   function ensureTrailSprites(n) {
