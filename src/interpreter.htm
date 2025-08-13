@@ -229,7 +229,7 @@ function resetAgeDataForProgram() {
 }
 function updateAgeDataOnMutation(len, mutatedIndexSet) {
   ensureAgeArraySized(len);
-  const maxAge = 300;
+  const maxAge = 500;
   for (let i = 0; i < len; i++) {
     const isMutated = mutatedIndexSet && (typeof mutatedIndexSet.has === 'function' ? mutatedIndexSet.has(i) : (Array.isArray(mutatedIndexSet) && mutatedIndexSet.includes(i)));
     if (isMutated) {
@@ -304,60 +304,48 @@ function drawGraph() {
 	const svg = document.getElementById("graph");
 	if (!svg) return;
 
-	const histories = traceHistory;
-	const inertias = outputInertia;
-	if (!histories.length) {
+	const ta = document.getElementById("program");
+	const tokens = ta && ta.value.trim() ? ta.value.trim().split(/\s+/) : [];
+	const n = tokens.length;
+
+	if (n === 0) {
 		svg.innerHTML = "";
 		svg.style.height = "0px";
 		return;
 	}
 
+	// Ensure per-instruction arrays match current program length
+	ensureAgeArraySized(n);
+	if (!costData || costData.length !== n) {
+		costData = new Array(n).fill(0);
+	}
+
 	const W = svg.clientWidth || 600;
-	const BASE_H = 30;     // height for inertia in [1..10]
-	const MIN_H  = 5;      // minimum row height for very high inertia
-	const GAP    = 1;      // gap between rows
-	const TAU    = 40;     // decay constant controlling how fast height shrinks
+	const H = 30;
+	const step = W / n;
 
-	function heightFromInertia(inertia) {
-		if (!inertia || inertia <= 10) return BASE_H;
-		if (inertia >= 150) return MIN_H;
-		const decay = Math.exp(-(inertia - 10) / TAU);
-		return Math.max(MIN_H, MIN_H + (BASE_H - MIN_H) * decay);
+	function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+	function costToColor(percent) {
+		const t = clamp01((percent || 0) / 100);
+		const r = Math.round(255 * t);
+		const g = 0;
+		const b = Math.round(255 * (1 - t));
+		return `rgb(${r},${g},${b})`;
+	}
+	function ageToOpacity(age) {
+		const ratio = clamp01((age || 0) / 500);
+		return 0.1 + 0.9 * ratio;
 	}
 
-	let y = 0;
 	let g = "";
-	// Draw newest at the top, older moving down
-	for (let idx = histories.length - 1; idx >= 0; idx--) {
-		const rowTrace = histories[idx] || [];
-		const inertia = inertias[idx] ?? 0;
-		const rowH = heightFromInertia(inertia);
-		const n = rowTrace.length;
-		if (n > 0) {
-			const step = n > 0 ? W / n : W;
-			// compute max callstack depth for this row
-			let maxDepth = 0;
-			for (let j = 0; j < n; j++) {
-				const csStr = rowTrace[j].callStack || "";
-				const depth = csStr.length ? csStr.split("|").length : 0;
-				if (depth > maxDepth) maxDepth = depth;
-			}
-			for (let j = 0; j < n; j++) {
-				const entry = rowTrace[j];
-				const csStr = entry.callStack || "";
-				const depth = csStr.length ? csStr.split("|").length : 0;
-				const colorIdx = Math.abs(hashCode(`${entry.tid}-${csStr}`)) % palette.length;
-				const col = palette[colorIdx];
-				const rawOpacity = maxDepth > 0 ? (depth / maxDepth) : 0;
-				const a = Math.min(1, Math.max(0.2, rawOpacity));
-				const x = j * step;
-				g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${rowH}' fill='${col}' fill-opacity='${a}'></rect>`;
-			}
-		}
-		y += rowH + GAP;
+	for (let i = 0; i < n; i++) {
+		const x = i * step;
+		const col = costToColor(costData[i] || 0);
+		const a = ageToOpacity(ageData[i] || 0);
+		g += `<rect x='${x}' y='0' width='${Math.max(1, step - 1)}' height='${H}' fill='${col}' fill-opacity='${a}'></rect>`;
 	}
 
-	svg.style.height = `${Math.ceil(y)}px`;
+	svg.style.height = `${H}px`;
 	svg.innerHTML = g;
 }
 
@@ -754,25 +742,25 @@ frameRef.idx = start;
     stepCount = inst;
   if (!dryRun) updateMetricsView(len, cc, lastCount);
 	// Append this run's output and trace to rolling history (cap at 20, 0 = most recent)
-  if (!dryRun) {
+    if (!dryRun) {
     // Ensure age array matches current program length
     ensureAgeArraySized(len);
+    // Recompute costData on every non-dry run before drawing
+    recomputeCostDataForCode(src);
  	outputHistory.push([...out]);
  	outputInertia.push(inertiaVal || 0);
  	outputColorHistory.push([]);
  	outputTitleHistory.push([]);
  	if (outputHistory.length > 20) outputHistory.shift();
  	if (outputInertia.length > 20) outputInertia.shift();
-    if (outputColorHistory.length > 20) outputColorHistory.shift();
-    if (outputTitleHistory.length > 20) outputTitleHistory.shift();
-    // new: store execution trace row for graph
-    traceHistory.push(EXECUTION_TRACE.map(e => ({ ...e })));
-    if (traceHistory.length > 20) traceHistory.shift();
-    drawGraph();
-    updateLabelsView();
-    // Recompute costData on every non-dry run
-    recomputeCostDataForCode(src);
-  }
+     if (outputColorHistory.length > 20) outputColorHistory.shift();
+     if (outputTitleHistory.length > 20) outputTitleHistory.shift();
+     // new: store execution trace row for graph
+     traceHistory.push(EXECUTION_TRACE.map(e => ({ ...e })));
+     if (traceHistory.length > 20) traceHistory.shift();
+     drawGraph();
+     updateLabelsView();
+   }
 	return out.join(" ");
 }
 
