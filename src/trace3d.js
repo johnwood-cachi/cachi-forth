@@ -152,6 +152,7 @@
     let isUserInteracting = false;
     const activePointers = new Map();
     let lastSinglePointerX = 0;
+    let lastSinglePointerY = 0;
     let pinchStartDistance = 0;
     let pinchStartZ = 0;
     const MIN_Z = 1.4;
@@ -163,6 +164,7 @@
       activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (activePointers.size === 1) {
         lastSinglePointerX = e.clientX;
+        lastSinglePointerY = e.clientY;
       } else if (activePointers.size === 2) {
         const pts = Array.from(activePointers.values());
         pinchStartDistance = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
@@ -178,9 +180,12 @@
 
       if (activePointers.size === 1) {
         const dx = e.clientX - lastSinglePointerX;
+        const dy = e.clientY - lastSinglePointerY;
         lastSinglePointerX = e.clientX;
+        lastSinglePointerY = e.clientY;
         const ROTATE_SPEED = 0.005;
         if (Number.isFinite(dx)) sphere.rotation.y += dx * ROTATE_SPEED;
+        if (Number.isFinite(dy)) sphere.rotation.x += dy * ROTATE_SPEED;
         e.preventDefault();
       } else if (activePointers.size === 2) {
         const pts = Array.from(activePointers.values());
@@ -204,7 +209,10 @@
       }
       if (activePointers.size === 1) {
         const remaining = Array.from(activePointers.values())[0];
-        if (remaining) lastSinglePointerX = remaining.x;
+        if (remaining) {
+          lastSinglePointerX = remaining.x;
+          lastSinglePointerY = remaining.y;
+        }
       }
       if (activePointers.size === 0) {
         isUserInteracting = false;
