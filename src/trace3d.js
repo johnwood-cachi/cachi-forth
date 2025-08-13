@@ -17,6 +17,11 @@
   const instructionIndexToHighlightTime = new Map(); // seconds since last hit (0..duration)
   const TARGET_HIGHLIGHT_DURATION = 1.0; // seconds
   const TARGET_HIGHLIGHT_COLOR = new THREE.Color(0xff8800); // bright orange
+  // Add: lights for highlighted targets
+  const instructionIndexToHighlightLight = new Map();
+  const TARGET_LIGHT_MAX_INTENSITY = 2.4;
+  const TARGET_LIGHT_DISTANCE = 1.5;
+  const TARGET_LIGHT_DECAY = 2.0;
 
   // Snake animation state
   let snakeGroup = null;
@@ -34,7 +39,7 @@
 
   // Light that follows the snake head
   let snakePointLight = null;
-  const SNAKE_LIGHT_MAX_INTENSITY = 1.8;
+  const SNAKE_LIGHT_MAX_INTENSITY = 5.0;
   const SNAKE_LIGHT_DECAY_SECONDS = 2.0;
   let snakeLightTimeSincePeak = Infinity;
 
@@ -71,10 +76,11 @@
     const mat = new THREE.MeshStandardMaterial({
       color: 0x06164d,
       transparent: true,
-      opacity: 0.05,
+      opacity: 0.08,
       metalness: 0.2,
       roughness: 0.35,
-      depthWrite: false
+      depthWrite: false,
+      side: THREE.BackSide
     });
     sphere = new THREE.Mesh(geom, mat);
     scene.add(sphere);
@@ -89,7 +95,8 @@
         metalness: 0.6,
         roughness: 0.2,
         wireframe: true,
-        depthWrite: false
+        depthWrite: false,
+        side: THREE.DoubleSide
       })
     );
     sphere.add(wireMesh);
@@ -200,6 +207,11 @@
     instructionIndexToPosition = [];
     clearSnake();
     instructionIndexToHighlightTime.clear();
+    // Remove any lingering highlight lights
+    instructionIndexToHighlightLight.forEach((light) => {
+      light.parent?.remove(light);
+    });
+    instructionIndexToHighlightLight.clear();
   }
 
   function clearSnake() {
@@ -510,6 +522,20 @@
   function triggerTargetHighlight(instructionIndex) {
     if (!Number.isInteger(instructionIndex)) return;
     instructionIndexToHighlightTime.set(instructionIndex, 0);
+    // Create or refresh a point light at this instruction while it is highlighted
+    const pos = instructionIndexToPosition[instructionIndex];
+    if (!pos || !pointsGroup) return;
+    let light = instructionIndexToHighlightLight.get(instructionIndex);
+    if (!light) {
+      light = new THREE.PointLight(TARGET_HIGHLIGHT_COLOR, TARGET_LIGHT_MAX_INTENSITY, TARGET_LIGHT_DISTANCE, TARGET_LIGHT_DECAY);
+      light.castShadow = false;
+      light.position.copy(pos);
+      pointsGroup.add(light);
+      instructionIndexToHighlightLight.set(instructionIndex, light);
+    } else {
+      light.intensity = TARGET_LIGHT_MAX_INTENSITY;
+      light.position.copy(pos);
+    }
   }
 
   function updateTargetHighlights(dt) {
@@ -519,6 +545,11 @@
       const mesh = instructionIndexToObject.get(idx);
       if (!mesh || !mesh.material) {
         toDelete.push(idx);
+        const lightOrphan = instructionIndexToHighlightLight.get(idx);
+        if (lightOrphan) {
+          lightOrphan.parent?.remove(lightOrphan);
+          instructionIndexToHighlightLight.delete(idx);
+        }
         return;
       }
       const mat = mesh.material;
@@ -533,11 +564,23 @@
       const emissiveFactor = baseEmissiveMin + (1.0 - baseEmissiveMin) * f;
       mat.emissive.copy(baseColor).lerp(TARGET_HIGHLIGHT_COLOR, f).multiplyScalar(emissiveFactor);
 
+      // Update accompanying light intensity and position while highlighted
+      const light = instructionIndexToHighlightLight.get(idx);
+      if (light) {
+        light.position.copy(mesh.position);
+        light.intensity = TARGET_LIGHT_MAX_INTENSITY * f;
+      }
+
       if (t >= 1) {
         // Restore base and stop tracking
         mat.color.copy(baseColor);
         mat.emissive.copy(baseColor).multiplyScalar(baseEmissiveMin);
         toDelete.push(idx);
+        // Remove and dispose the light
+        if (light) {
+          light.parent?.remove(light);
+          instructionIndexToHighlightLight.delete(idx);
+        }
       } else {
         instructionIndexToHighlightTime.set(idx, newElapsed);
       }
