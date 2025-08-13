@@ -229,13 +229,14 @@ function toggleAuto () {
     autoTimer = null;
     targetSteps = 0;
     btn.textContent = "Start";
+    try { if (window.Trace3D && typeof window.Trace3D.stop === 'function') window.Trace3D.stop(); } catch (e) { /* no-op */ }
     return;
   }
 
   // ----- START -----
   btn.textContent = "Stop";
   targetSteps = stepCount;
-  try { if (window.Trace3D && typeof window.Trace3D.setup === 'function') window.Trace3D.setup(EXECUTION_TRACE); } catch (e) { /* no-op */ }
+  try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
   autoTimer = setInterval(() => {
     const lost = Object.values(LABELS).some(v => v === -1);
     if (lost) {                    // stop if any label vanished
@@ -742,7 +743,7 @@ const savedPrograms = [];
 function runProgram(d = false) {
 	const code = document.getElementById("program").value.trim();
 	runWithOutput(code, d);
-	try { if (window.Trace3D && typeof window.Trace3D.setup === 'function') window.Trace3D.setup(EXECUTION_TRACE); } catch (e) { /* no-op */ }
+	  try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
 }
 
 function saveProgram() {

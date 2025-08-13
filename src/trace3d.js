@@ -39,6 +39,13 @@
   // Parallel animation scheduling
   let eventAccumulator = 0;
   const EVENTS_PER_SECOND = 60;
+  // Track remaining, unprocessed events per thread to know when a snake is truly finished
+  const remainingEventsByTid = new Map();
+
+  function isAnimationActive() {
+    // Active if there are pending global events to inject or any snakes alive
+    return (globalTraceIndex < globalTrace.length) || (snakesByTid.size > 0);
+  }
 
   function initTrace3D() {
     container = document.getElementById('trace3d');
@@ -223,6 +230,7 @@
     globalTrace = [];
     globalTraceIndex = 0;
     lastActiveTid = null;
+    remainingEventsByTid.clear();
   }
 
   function getProgramTokens() {
@@ -236,6 +244,9 @@
 
   function setup(executionTrace) {
     if (!scene || !pointsGroup) return;
+
+    // If an animation is already in progress, ignore this request and let it finish
+    if (isAnimationActive()) return;
 
     clearPoints();
 
@@ -354,6 +365,15 @@
     eventAccumulator = 0;
     lastActiveTid = null;
 
+    // Initialize remaining events per thread
+    remainingEventsByTid.clear();
+    for (let i = 0; i < globalTrace.length; i++) {
+      const tid = globalTrace[i]?.tid;
+      if (Number.isInteger(tid)) {
+        remainingEventsByTid.set(tid, (remainingEventsByTid.get(tid) || 0) + 1);
+      }
+    }
+
     // Initialize first snake position if available
     const firstEntry = globalTrace[0];
     if (firstEntry && Number.isInteger(firstEntry.tid)) {
@@ -402,10 +422,11 @@
       lastActiveTid = tid;
 
       const depthPx = Math.max(SNAKE_MIN_TRAIL_PX, getStackDepthFromTraceEntry(currentEntry) * SNAKE_PX_PER_STACK);
-      snake.pendingTargets.push({ ip, targetTrailPx: depthPx });
+      snake.pendingTargets.push({ tid, ip, targetTrailPx: depthPx });
     }
 
     // Move all snakes independently toward their per-thread targets at fixed speed
+    const snakesToRemove = [];
     snakesByTid.forEach((snake) => {
       if (!snake.head) return;
 
@@ -432,6 +453,13 @@
           triggerTargetHighlight(snake.currentEvent.ip);
           // Update trail target based on event's recorded stack depth
           snake.targetTrailPixels = snake.currentEvent.targetTrailPx;
+
+          // Mark this event as processed for the owning thread
+          if (Number.isInteger(snake.currentEvent.tid)) {
+            const prev = remainingEventsByTid.get(snake.currentEvent.tid) || 0;
+            remainingEventsByTid.set(snake.currentEvent.tid, Math.max(0, prev - 1));
+          }
+
           remainingMove -= dist;
           snake.currentEvent = null;
           // loop to consider next pending event within remainingMove
@@ -463,7 +491,16 @@
 
       // Trail sprites
       updateTrailSpritesForSnake(snake, Math.max(0.01, snake.targetTrailPixels * wupp));
+
+      // If this snake has fully finished its events and has no more pending work, mark for removal
+      const remainingForTid = remainingEventsByTid.get(snake.tid) || 0;
+      if (!snake.currentEvent && snake.pendingTargets.length === 0 && remainingForTid === 0) {
+        snakesToRemove.push(snake.tid);
+      }
     });
+
+    // Remove finished snakes now that iteration is complete
+    for (const tid of snakesToRemove) removeSnakeByTid(tid);
 
     // Update target highlight fades
     updateTargetHighlights(dt);
@@ -605,12 +642,56 @@
     for (const idx of toDelete) instructionIndexToHighlightTime.delete(idx);
   }
 
+  function removeSnakeByTid(tid) {
+    const snake = snakesByTid.get(tid);
+    if (!snake) return;
+    // Remove trail sprites and dispose materials
+    if (Array.isArray(snake.trailSprites)) {
+      for (let i = 0; i < snake.trailSprites.length; i++) {
+        const spr = snake.trailSprites[i];
+        if (spr) {
+          snake.group.remove(spr);
+          spr.material?.dispose?.();
+        }
+      }
+      snake.trailSprites.length = 0;
+    }
+    // Remove head
+    if (snake.head) {
+      snake.group.remove(snake.head);
+      snake.head.material?.dispose?.();
+      snake.head.geometry?.dispose?.();
+    }
+    // Remove light
+    if (snake.pointLight) {
+      snake.group.remove(snake.pointLight);
+    }
+    // Remove group from the scene
+    if (snake.group) {
+      snakeGroup.remove(snake.group);
+    }
+    snakesByTid.delete(tid);
+  }
+
+  function stopAnimation() {
+    // Clear all snakes and pending events; leave points as-is
+    clearSnakes();
+    // Also clear any active highlights
+    instructionIndexToHighlightTime.clear();
+    instructionIndexToHighlightLight.forEach((light) => {
+      light.parent?.remove(light);
+    });
+    instructionIndexToHighlightLight.clear();
+  }
+
   // expose API
   window.Trace3D = {
     setup,
     layoutPoints,
     getObjectForTraceIndex: (idx) => instructionIndexToObject.get(idx) || null,
-    getObjectForInstructionIndex: (idx) => instructionIndexToObject.get(idx) || null
+    getObjectForInstructionIndex: (idx) => instructionIndexToObject.get(idx) || null,
+    stop: stopAnimation,
+    isAnimating: isAnimationActive
   };
 
   if (document.readyState === 'loading') {
