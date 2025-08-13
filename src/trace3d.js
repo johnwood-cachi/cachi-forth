@@ -38,7 +38,7 @@
   const SNAKE_LIGHT_DECAY_SECONDS = 2.0;
 
   // Maximum allowed thread id; entries with larger TID are ignored for performance
-  const MAX_TID = 10;
+  const MAX_TID = 20;
 
   // Lightning tail parameters
   const LIGHTNING_BASE_AMPLITUDE = 0.035; // world units
