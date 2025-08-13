@@ -87,7 +87,7 @@
     scene.add(dir);
 
     // Backdrop plane behind the sphere to catch light
-    const BACKDROP_Z = -1.3;
+    const BACKDROP_Z = -1.1;
     backdropPlane = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
       new THREE.MeshStandardMaterial({
