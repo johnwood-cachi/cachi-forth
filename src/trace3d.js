@@ -71,7 +71,7 @@
     const mat = new THREE.MeshStandardMaterial({
       color: 0x44aaff,
       transparent: true,
-      opacity: 0.35,
+      opacity: 0.15,
       metalness: 0.1,
       roughness: 0.2,
       depthWrite: false
