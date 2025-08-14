@@ -32,7 +32,7 @@
   const SNAKE_MIN_TRAIL_PX = 50;
   const SNAKE_MAX_TRAIL_PX = 250;
   const SNAKE_PX_PER_STACK = 5;
-  const SNAKE_SPEED_UNITS_PER_SEC = 3.6; // movement speed in world units (3x faster)
+  const SNAKE_SPEED_UNITS_PER_SEC = 4; // movement speed in world units (3x faster)
 
   const SNAKE_LIGHT_MAX_INTENSITY = 5.0;
   const SNAKE_LIGHT_DECAY_SECONDS = 2.0;
@@ -41,11 +41,11 @@
   const MAX_TID = 20;
 
   // Lightning tail parameters
-  const LIGHTNING_BASE_AMPLITUDE = 0.015; // world units
+  const LIGHTNING_BASE_AMPLITUDE = 0.010; // world units
   const LIGHTNING_STEP_LENGTH = 0.03;     // approx spacing of jitter points per segment
   const LIGHTNING_MAX_SUBDIVISIONS = 5;
   const LIGHTNING_COLORS = [0x99ddff, 0x66aaff];
-  const LIGHTNING_OPACITIES = [0.8, 0.5];
+  const LIGHTNING_OPACITIES = [0.9, 0.6];
 
   // Parallel animation scheduling
   let eventAccumulator = 0;
