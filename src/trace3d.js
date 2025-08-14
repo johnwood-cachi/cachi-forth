@@ -461,7 +461,8 @@
     head.position.copy(startPos);
     group.add(head);
 
-    const pointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
+    //const pointLight = new THREE.PointLight(0xffcc88, 0.0, 3.0, 2.0);
+    const pointLight = new THREE.PointLight(0xffcc88, 0.5, 0, 0.0);
     pointLight.castShadow = false;
     group.add(pointLight);
 
