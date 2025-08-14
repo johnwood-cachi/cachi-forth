@@ -179,19 +179,30 @@ function generateRandomProgram() {
 	inertiaHist = [];
 	updateInertia();
 	if (autoTimer) toggleAuto();   // ensure auto-evolve halts on Clear
+	// Stop any ongoing 3D animation immediately
+	try { if (window.Trace3D && typeof window.Trace3D.stop === 'function') window.Trace3D.stop(); } catch (e) { /* no-op */ }
 
-	const tot = 50,
-		numFuncs = Math.floor(Math.random() * 4) + 1,
-		active = funcNames.slice(0, numFuncs);
-	const defs = [];
-	for (const name of active) {
-		defs.push(`>${name} ${randToken(active)} ${randToken(active)} ${randToken(active)} end`);
+	let code = "";
+	while (true) {
+		const tot = 50,
+			numFuncs = Math.floor(Math.random() * 4) + 1,
+			active = funcNames.slice(0, numFuncs);
+		const defs = [];
+		for (const name of active) {
+			defs.push(`>${name} ${randToken(active)} ${randToken(active)} ${randToken(active)} end`);
+		}
+		const toks = [];
+		while (toks.length < tot - defs.join(" ").split(/\s+/).length - 2) toks.push(randToken(active));
+		toks.push("out", "end");
+		code = defs.join("\n") + "\n" + toks.join(" ");
+
+		// Dry-run to measure steps without updating UI/trace
+		runWithOutput(code, false, { dryRun: true });
+		if (stepCount > 50 && stepCount < MAX_INST) break;
 	}
-	const toks = [];
-	while (toks.length < tot - defs.join(" ").split(/\s+/).length - 2) toks.push(randToken(active));
-	toks.push("out", "end");
-	document.getElementById("program").value = defs.join("\n") + "\n" + toks.join(" ");
-  resetAgeDataForProgram();
+
+	document.getElementById("program").value = code;
+	resetAgeDataForProgram();
 	runProgram(false, { forceHistory: true });
 }
 
