@@ -456,7 +456,7 @@
     snakeGroup.add(group);
 
     const headGeom = new THREE.SphereGeometry(0.015, 12, 8);
-    const headMat = new THREE.MeshStandardMaterial({ color: 0x0fde86a, emissive: 0xffcc33, emissiveIntensity: 1.0 });
+    const headMat = new THREE.MeshStandardMaterial({ color: 0x0fde86a, emissive: 0xffcc33, emissiveIntensity: 0.5 });
     const head = new THREE.Mesh(headGeom, headMat);
     head.position.copy(startPos);
     group.add(head);
