@@ -41,8 +41,8 @@
   const MAX_TID = 20;
 
   // Lightning tail parameters
-  const LIGHTNING_BASE_AMPLITUDE = 0.035; // world units
-  const LIGHTNING_STEP_LENGTH = 0.06;     // approx spacing of jitter points per segment
+  const LIGHTNING_BASE_AMPLITUDE = 0.135; // world units
+  const LIGHTNING_STEP_LENGTH = 0.03;     // approx spacing of jitter points per segment
   const LIGHTNING_MAX_SUBDIVISIONS = 5;
   const LIGHTNING_COLORS = [0x99ddff, 0x66aaff];
   const LIGHTNING_OPACITIES = [0.9, 0.6];
