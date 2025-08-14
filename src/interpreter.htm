@@ -73,6 +73,7 @@ let graphHistory = [];
 const MAX_GRAPH_ROWS = 50;
 const GRAPH_ROW_HEIGHT = 12;
 
+let programTouchedByUser = false;
 let autoTimer   = null;   // holds setInterval handle
 let mutCount    = 0;      // shown in UI
 const STEP_MS   = 200;    // mutation cadence (adjust to taste)
@@ -190,7 +191,7 @@ function generateRandomProgram() {
 	toks.push("out", "end");
 	document.getElementById("program").value = defs.join("\n") + "\n" + toks.join(" ");
   resetAgeDataForProgram();
-	runProgram();
+	runProgram(false, { forceHistory: true });
 }
 
   function getMetrics (tokenArr) {
@@ -417,6 +418,7 @@ function collectSeed(frame) {
 /******************** INTERPRETER *********************/
 function runWithOutput(src, debug = false, opts = {}) {
 	const dryRun = opts && opts.dryRun === true;
+	const addToHistory = (opts && typeof opts.addToHistory !== 'undefined') ? !!opts.addToHistory : true;
 	const tokens = src.trim().split(/\s+/);
 	// refresh LABELS: default everything to –1 (skip during dry runs)
 	if (!dryRun) {
@@ -780,9 +782,11 @@ frameRef.idx = start;
     ensureAgeArraySized(len);
     // Recompute costData on every non-dry run before drawing
     recomputeCostDataForCode(src);
-    // Snapshot current heat map entry and unshift to top
-    graphHistory.unshift({ costs: [...costData], ages: [...ageData] });
-    if (graphHistory.length > MAX_GRAPH_ROWS) graphHistory.pop();
+    // Snapshot current heat map entry and unshift to top (only when adding to graph history)
+    if (addToHistory) {
+      graphHistory.unshift({ costs: [...costData], ages: [...ageData], program: src });
+      if (graphHistory.length > MAX_GRAPH_ROWS) graphHistory.pop();
+    }
  	outputHistory.push([...out]);
  	outputInertia.push(inertiaVal || 0);
  	outputColorHistory.push([]);
@@ -803,9 +807,11 @@ frameRef.idx = start;
 /******************** UI *********************/
 const savedPrograms = [];
 
-function runProgram(d = false) {
+function runProgram(d = false, opts = {}) {
 	const code = document.getElementById("program").value.trim();
-	runWithOutput(code, d);
+	const addToHistory = (opts && opts.forceHistory) || programTouchedByUser;
+	runWithOutput(code, d, { addToHistory });
+	programTouchedByUser = false;
 	  try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
 }
 
@@ -934,7 +940,7 @@ function mutateProgram() {
         updateAgeDataOnMutation(origLen, indices);
 
         document.getElementById("program").value = newCode;
-        runProgram();
+        runProgram(false, { forceHistory: true });
         return;
       }
     }
@@ -1233,7 +1239,7 @@ window.onload = () => {
 	}
 	updateMutCount();   // initialise counter to 0 on first load
   const progEl = document.getElementById("program");
-  if (progEl) progEl.addEventListener('input', () => { resetAgeDataForProgram(); });
+  if (progEl) progEl.addEventListener('input', () => { programTouchedByUser = true; resetAgeDataForProgram(); });
 	// show Instruction label when hovering over the heatmap and update based on X
 	const graph = document.getElementById("graph");
 	if (graph) {
@@ -1265,6 +1271,18 @@ window.onload = () => {
 			const t = document.getElementById("instructionText");
 			if (t) t.textContent = tokens[idx] || "";
 			labelEl.style.display = "inline";
+		});
+		graph.addEventListener("click", (e) => {
+			const rect = graph.getBoundingClientRect();
+			const y = e.clientY - rect.top;
+			const r = Math.floor(y / GRAPH_ROW_HEIGHT);
+			const rows = Math.min(graphHistory.length, MAX_GRAPH_ROWS);
+			if (r < 0 || r >= rows) return;
+			const entry = graphHistory[r];
+			if (!entry || !entry.program) return;
+			const ta = document.getElementById("program");
+			if (ta) ta.value = entry.program;
+			programTouchedByUser = false;
 		});
 	}
 };
