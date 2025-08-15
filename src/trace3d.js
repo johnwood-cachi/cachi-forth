@@ -5,7 +5,7 @@
   }
 
   // shared state for the widget
-  let container, renderer, scene, camera, sphere, backdropPlane;
+  let container, renderer, scene, camera, sphere, backdropPlane, torus;
   let pointsGroup;
   const traceIndexToObject = new Map();
   let sharedPointGeometry = null;
@@ -22,6 +22,10 @@
   const TARGET_LIGHT_MAX_INTENSITY = 2.4;
   const TARGET_LIGHT_DISTANCE = 1.5;
   const TARGET_LIGHT_DECAY = 2.0;
+
+  // Torus textures
+  let torusMapTexture = null;
+  let torusBumpTexture = null;
 
   // Snake animation state (multi-thread)
   let snakeGroup = null;
@@ -140,6 +144,29 @@
     );
     sphere.add(wireMesh);
 
+    // Bronze torus around the sphere (world-space so it does not rotate with the sphere)
+    const texLoader = new THREE.TextureLoader();
+    torusMapTexture = texLoader.load('./spaceship.png');
+    torusMapTexture.colorSpace = THREE.SRGBColorSpace;
+    torusMapTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    torusBumpTexture = texLoader.load('./spaceship.png');
+    torusBumpTexture.colorSpace = THREE.NoColorSpace;
+    torusBumpTexture.anisotropy = torusMapTexture.anisotropy;
+    const torusMaterial = new THREE.MeshStandardMaterial({
+      color: 0xcd7f32,          // bronze
+      metalness: 1.0,
+      roughness: 0.35,
+      map: torusMapTexture,
+      bumpMap: torusBumpTexture,
+      bumpScale: 0.03
+    });
+    torus = new THREE.Mesh(
+      new THREE.TorusGeometry(1.15, 0.06, 64, 128),
+      torusMaterial
+    );
+    torus.position.set(0, 0, 0);
+    scene.add(torus);
+
     // Points container (tethered to sphere so it rotates together)
     pointsGroup = new THREE.Group();
     sphere.add(pointsGroup);
@@ -240,7 +267,12 @@
       const autoX = isUserInteracting ? 0 : 0.005;
       sphere.rotation.y += autoY;
       sphere.rotation.x += autoX;
+      // Keep backdrop sized to view
       updateBackdropPlaneSize();
+      // Keep torus orientation tethered to the camera so it stays visually static
+      if (torus && camera) {
+        torus.quaternion.copy(camera.quaternion);
+      }
       updateSnakes(dt);
       renderer.render(scene, camera);
     }
@@ -285,6 +317,12 @@
         backdropPlane.geometry?.dispose?.();
         backdropPlane.material?.dispose?.();
       }
+      if (torus) {
+        torus.geometry?.dispose?.();
+        torus.material?.dispose?.();
+      }
+      if (torusMapTexture) torusMapTexture.dispose?.();
+      if (torusBumpTexture) torusBumpTexture.dispose?.();
     });
   }
 
