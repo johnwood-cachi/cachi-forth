@@ -86,8 +86,8 @@
     camera.position.set(0, 0, 3);
 
     // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 0.01));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.3);
+    //scene.add(new THREE.AmbientLight(0xffffff, 0.001));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.15);
     dir.position.set(5, 8, 6);
     scene.add(dir);
 
@@ -115,9 +115,9 @@
     }
 
     // Translucent sphere
-    const geom = new THREE.SphereGeometry(1, 48, 32);
+    const geom = new THREE.SphereGeometry(1, 24, 24);
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x06164d,
+      color: 0x713f1,
       transparent: true,
       opacity: 0.08,
       metalness: 0.2,
@@ -132,11 +132,11 @@
     const wireMesh = new THREE.Mesh(
       geom,
       new THREE.MeshStandardMaterial({
-        color: 0x88ccff,
+        color: 0x713f12,
         transparent: true,
-        opacity: 0.25,
-        metalness: 0.6,
-        roughness: 0.2,
+        opacity: 0.15,
+        metalness: 0.7,
+        roughness: 0.3,
         wireframe: true,
         depthWrite: false,
         side: THREE.DoubleSide
@@ -154,17 +154,17 @@
     torusBumpTexture.anisotropy = torusMapTexture.anisotropy;
     const torusMaterial = new THREE.MeshStandardMaterial({
       color: 0xcd7f32,          // bronze
-      metalness: 1.0,
-      roughness: 0.35,
+      metalness: 1.2,
+      roughness: 0.45,
       map: torusMapTexture,
       bumpMap: torusBumpTexture,
-      bumpScale: 0.03
+      bumpScale: 0.10
     });
     torus = new THREE.Mesh(
-      new THREE.TorusGeometry(2.15, 0.12, 64, 128),
+      new THREE.TorusGeometry(1.40, 0.11, 64, 128),
       torusMaterial
     );
-    torus.position.set(0, 0, 0);
+    torus.position.set(0, 0, -0.5);
     scene.add(torus);
 
     // Points container (tethered to sphere so it rotates together)
@@ -465,6 +465,7 @@
         // Store base visual parameters for highlight blending
         mat.userData.baseColor = color.clone();
         mat.userData.baseEmissiveMin = 0.01;
+        mat.emissiveIntensity = 1.5;
         const m = new THREE.Mesh(sharedPointGeometry, mat);
         m.position.copy(pos);
         pointsGroup.add(m);
