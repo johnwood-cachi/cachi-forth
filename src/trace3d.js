@@ -161,7 +161,7 @@
       bumpScale: 0.03
     });
     torus = new THREE.Mesh(
-      new THREE.TorusGeometry(1.15, 0.06, 64, 128),
+      new THREE.TorusGeometry(2.15, 0.12, 64, 128),
       torusMaterial
     );
     torus.position.set(0, 0, 0);
