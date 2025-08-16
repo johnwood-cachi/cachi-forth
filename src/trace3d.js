@@ -165,7 +165,7 @@
       torusMaterial
     );
     torus.position.set(0, 0, -0.5);
-    scene.add(torus);
+    //scene.add(torus);
 
     // Points container (tethered to sphere so it rotates together)
     pointsGroup = new THREE.Group();
