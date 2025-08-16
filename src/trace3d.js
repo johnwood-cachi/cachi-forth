@@ -138,7 +138,7 @@
         metalness: 0.7,
         roughness: 0.3,
         wireframe: true,
-        depthWrite: false,
+        depthWrite: false,  
         side: THREE.DoubleSide
       })
     );
