@@ -38,6 +38,7 @@
   <button id="autoBtn" onclick="toggleAuto()">Start</button>
   <button onclick="computePerturbationIndex()">Calc Inertia</button>
   <button onclick="computeSelectedCost()">Calc Cost</button>
+  <button id="survivalBtn" onclick="toggleSurvival()">Survival</button>
   <div style='margin-bottom: 10px;'>
 &nbsp;Generation: <span id="mutCount">0</span>
 &nbsp;|&nbsp;Inertia:&nbsp;<span id="inertiaVal">0</span>
@@ -81,11 +82,16 @@ const STEP_MS   = 200;    // mutation cadence (adjust to taste)
 let stepCount = 0;
 let stepPeg = 0;
 let bitCounter = 0;
+const HISTORY_LIMIT = 50;
 let outputHistory = [];
 let outputInertia = [];
 let targetSteps = 0;
+let targetCost = 0;
 let outputColorHistory = [];
 let outputTitleHistory = [];
+let survivalMode = false;
+let survivalExpr = "";
+let lastRunCost = 0;
 const PERTURBATION_RUNS = 100;
 const PI_TOTAL_TIMEOUT_MS = 8000; // total time cap for a full PI computation
 const PI_MIN_TRIALS = 10;         // require at least this many samples per side
@@ -221,12 +227,12 @@ function generateRandomProgram() {
   return { len: tokenArr.length, cc, lastCount };
 }
 
-function updateMetricsView (len, cc, lastCount) {
+function updateMetricsView (len, cc, lastCount, penalty = 0) {
   const lEl = document.getElementById("progLen");
   const cEl = document.getElementById("ccVal");
   const lastEl = document.getElementById("lastCount");
   document.getElementById("stepCount").textContent = stepCount;
-  document.getElementById("cost").textContent = (len * stepCount);
+  document.getElementById("cost").textContent = (len * stepCount + penalty);
   if (lEl) lEl.textContent = len;
   if (cEl) cEl.textContent = cc;
   if (lastEl) lastEl.textContent = lastCount || 0;
@@ -288,6 +294,7 @@ function toggleAuto () {
     clearInterval(autoTimer);
     autoTimer = null;
     targetSteps = 0;
+    targetCost = 0;
     btn.textContent = "Start";
     try { if (window.Trace3D && typeof window.Trace3D.stop === 'function') window.Trace3D.stop(); } catch (e) { /* no-op */ }
     return;
@@ -295,7 +302,15 @@ function toggleAuto () {
 
   // ----- START -----
   btn.textContent = "Stop";
-  targetSteps = stepCount;
+  if (survivalMode) {
+    const code = document.getElementById("program").value.trim();
+    const m = averageMetrics(code);
+    targetSteps = m.avgSteps;
+    targetCost = m.avgCost;
+  } else {
+    targetSteps = stepCount;
+    targetCost = 0;
+  }
   resetAgeDataForProgram();
   try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
   autoTimer = setInterval(() => {
@@ -308,6 +323,22 @@ function toggleAuto () {
     mutCount++;
     updateMutCount();
   }, STEP_MS);
+}
+
+function toggleSurvival() {
+  const btn = document.getElementById("survivalBtn");
+  if (!btn) return;
+  if (!survivalMode) {
+    const expr = prompt("Enter survival expression (use 'input' array):", survivalExpr);
+    if (expr !== null) {
+      survivalExpr = expr;
+      survivalMode = true;
+      btn.textContent = "Survival On";
+    }
+  } else {
+    survivalMode = false;
+    btn.textContent = "Survival";
+  }
 }
 
 function updateLabelsView () {
@@ -429,32 +460,43 @@ function collectSeed(frame) {
 
 /******************** INTERPRETER *********************/
 function runWithOutput(src, debug = false, opts = {}) {
-	const dryRun = opts && opts.dryRun === true;
-	const addToHistory = (opts && typeof opts.addToHistory !== 'undefined') ? !!opts.addToHistory : true;
-	const tokens = src.trim().split(/\s+/);
-	// refresh LABELS: default everything to –1 (skip during dry runs)
-	if (!dryRun) {
-		for (const k in LABELS) LABELS[k] = -1;
-		tokens.forEach((t, i) => {
-		  const [, lab] = splitTok(t);
-		  if (lab) LABELS[lab] = i;          // absolute offset in original token list
-		});
-		EXECUTION_TRACE = [];
-	}
+        const dryRun = opts && opts.dryRun === true;
+        const addToHistory = (opts && typeof opts.addToHistory !== 'undefined') ? !!opts.addToHistory : true;
+        const tokens = src.trim().split(/\s+/);
+        const inputStack = (opts && Array.isArray(opts.inputStack)) ? opts.inputStack.slice() : [];
+        let survivalTarget = null;
+        if (survivalMode && survivalExpr) {
+                try {
+                        const input = inputStack.slice();
+                        survivalTarget = Number(eval(survivalExpr));
+                        if (!isFinite(survivalTarget)) survivalTarget = null;
+                } catch (e) {
+                        survivalTarget = null;
+                }
+        }
+        // refresh LABELS: default everything to –1 (skip during dry runs)
+        if (!dryRun) {
+                for (const k in LABELS) LABELS[k] = -1;
+                tokens.forEach((t, i) => {
+                  const [, lab] = splitTok(t);
+                  if (lab) LABELS[lab] = i;          // absolute offset in original token list
+                });
+                EXECUTION_TRACE = [];
+        }
     let thisStep = 0;
-	const functions = {};
-	const { tokens: main, indices: mainIdx } = parseDefs(tokens, functions);
-	let nextThreadId = 0; // stable, monotonic thread IDs per run
-	const threads = [{
-		id: nextThreadId++,
-		pc: 0,
+        const functions = {};
+        const { tokens: main, indices: mainIdx } = parseDefs(tokens, functions);
+        let nextThreadId = 0; // stable, monotonic thread IDs per run
+        const threads = [{
+                id: nextThreadId++,
+                pc: 0,
     tokens: main,
     indices: mainIdx,
-    stack: [],
+    stack: inputStack.slice().reverse(),
     callStack: [],
-		blockStack: [],
-		fn: ""
-	}];
+                blockStack: [],
+                fn: ""
+        }];
 	const out = [];
 	const outHTML = [],
 		vals = [],
@@ -785,10 +827,13 @@ frameRef.idx = start;
 		}
 	}
 		// removed output DOM update
-	const { len, cc, lastCount } = getMetrics(tokens);
+        const { len, cc, lastCount } = getMetrics(tokens);
     stepCount = inst;
-  if (!dryRun) updateMetricsView(len, cc, lastCount);
-	// Append this run's output and trace to rolling history (cap at 20, 0 = most recent)
+    const actualTop = out.length ? out[out.length - 1] : 0;
+    const survivalPenalty = (survivalTarget !== null) ? Math.abs(actualTop - survivalTarget) : 0;
+    lastRunCost = len * stepCount + survivalPenalty;
+  if (!dryRun) updateMetricsView(len, cc, lastCount, survivalPenalty);
+        // Append this run's output and trace to rolling history (cap at HISTORY_LIMIT, 0 = most recent)
     if (!dryRun) {
     // Ensure age array matches current program length
     ensureAgeArraySized(len);
@@ -799,17 +844,17 @@ frameRef.idx = start;
       graphHistory.unshift({ costs: [...costData], ages: [...ageData], program: src });
       if (graphHistory.length > MAX_GRAPH_ROWS) graphHistory.pop();
     }
- 	outputHistory.push([...out]);
- 	outputInertia.push(inertiaVal || 0);
- 	outputColorHistory.push([]);
- 	outputTitleHistory.push([]);
- 	if (outputHistory.length > 20) outputHistory.shift();
- 	if (outputInertia.length > 20) outputInertia.shift();
-     if (outputColorHistory.length > 20) outputColorHistory.shift();
-     if (outputTitleHistory.length > 20) outputTitleHistory.shift();
+    outputHistory.push([...out]);
+        outputInertia.push(inertiaVal || 0);
+        outputColorHistory.push([]);
+        outputTitleHistory.push([]);
+        if (outputHistory.length > HISTORY_LIMIT) outputHistory.shift();
+        if (outputInertia.length > HISTORY_LIMIT) outputInertia.shift();
+     if (outputColorHistory.length > HISTORY_LIMIT) outputColorHistory.shift();
+     if (outputTitleHistory.length > HISTORY_LIMIT) outputTitleHistory.shift();
      // new: store execution trace row for graph
      traceHistory.push(EXECUTION_TRACE.map(e => ({ ...e })));
-     if (traceHistory.length > 20) traceHistory.shift();
+     if (traceHistory.length > HISTORY_LIMIT) traceHistory.shift();
      drawGraph();
      updateLabelsView();
    }
@@ -859,12 +904,28 @@ function saveProgram() {
 }
 
 function clearSavedPrograms() {
-	mutCount = 0;
-	updateMutCount();
-	LABELS = { };
-	savedPrograms.length = 0;
+        mutCount = 0;
+        updateMutCount();
+        LABELS = { };
+        savedPrograms.length = 0;
     document.getElementById("savedList").innerHTML = "";
 }
+
+function averageMetrics(code) {
+  const inputs = outputHistory.length ? outputHistory : [[]];
+  let totalSteps = 0;
+  let totalCost = 0;
+  let firstOut = null;
+  for (let i = 0; i < inputs.length; i++) {
+    const outStr = runWithOutput(code, false, { dryRun: true, inputStack: inputs[i] });
+    totalSteps += stepCount;
+    totalCost += lastRunCost;
+    if (i === 0) firstOut = outStr;
+  }
+  const cnt = inputs.length || 1;
+  return { avgSteps: totalSteps / cnt, avgCost: totalCost / cnt, firstOut };
+}
+
 function mutateProgram() {
   const orig = document.getElementById("program").value.trim();
   if (!orig) return;
@@ -893,9 +954,18 @@ function mutateProgram() {
   }
   
   const origLen = toks.length;
-  const origOut = runWithOutput(orig, false, {dryRun:true});
-  const origStep = stepCount;
-  const maxStepDelta = Math.ceil(origStep * 0.05); // 5% margin on steps
+  let origOut, origStep, origCost;
+  if (survivalMode) {
+    const mOrig = averageMetrics(orig);
+    origOut = mOrig.firstOut;
+    origStep = mOrig.avgSteps;
+    origCost = mOrig.avgCost;
+  } else {
+    origOut = runWithOutput(orig, false, {dryRun:true});
+    origStep = stepCount;
+  }
+  const baseline = survivalMode ? origCost : origStep;
+  const maxDelta = Math.ceil(baseline * 0.05); // 5% margin
   const maxAttemptsPerDelta = 500;
 
   let deltaTokens = 1;
@@ -934,11 +1004,20 @@ function mutateProgram() {
       const newCode = mut.join(" ");
       totalAttempts++;
       inertiaVal = totalAttempts;
-      const newOut = runWithOutput(newCode, false, {dryRun:true});
-      const newStep = stepCount;
- 
+      let newOut, measure;
+      if (survivalMode) {
+        const mNew = averageMetrics(newCode);
+        newOut = mNew.firstOut;
+        measure = mNew.avgCost;
+      } else {
+        newOut = runWithOutput(newCode, false, {dryRun:true});
+        measure = stepCount;
+      }
+
+      const target = survivalMode ? (targetCost==0 ? origCost : targetCost) : (targetSteps==0 ? origStep : targetSteps);
+
       if (
-        Math.abs(newStep - (targetSteps==0 ? origStep : targetSteps)) <= maxStepDelta &&
+        Math.abs(measure - target) <= maxDelta &&
         newOut !== origOut &&
         mut.length === origLen
       ) {
