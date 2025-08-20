@@ -319,15 +319,15 @@ function toggleAuto () {
       toggleAuto();
       return;
     }
+	var doMutate = true;
     if (survivalMode) {
       const target = targetCost==0 ? lastRunCost : targetCost;
       const maxDelta = Math.ceil(target * 0.05);
       if (Math.abs(lastRunCost - target) <= maxDelta) {
-        toggleAuto();
-        return;
+		 doMutate = false;
       }
     }
-    mutateProgram();               // perform one mutation
+    if (doMutate) mutateProgram();               // perform one mutation
     mutCount++;
     updateMutCount();
   }, STEP_MS);
