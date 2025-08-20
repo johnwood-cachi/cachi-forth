@@ -463,7 +463,8 @@ function runWithOutput(src, debug = false, opts = {}) {
         const dryRun = opts && opts.dryRun === true;
         const addToHistory = (opts && typeof opts.addToHistory !== 'undefined') ? !!opts.addToHistory : true;
         const tokens = src.trim().split(/\s+/);
-        const inputStack = (opts && Array.isArray(opts.inputStack)) ? opts.inputStack.slice() : [];
+        var inputStack = (opts && Array.isArray(opts.inputStack)) ? opts.inputStack.slice() : [];
+		inputStack = [ ~~(Math.random() * 127), ~~(Math.random() * 127), ~~(Math.random() * 127), ~~(Math.random() * 127) ];
         let survivalTarget = null;
         if (survivalMode && survivalExpr) {
                 try {
