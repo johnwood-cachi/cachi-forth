@@ -840,8 +840,9 @@ frameRef.idx = start;
     stepCount = inst;
     const actualTop = out.length ? out[out.length - 1] : 0;
     const survivalPenalty = (survivalTarget !== null) ? Math.abs(actualTop - survivalTarget) : 0;
-    lastRunCost = len * stepCount + (survivalPenalty==0 ? 0 : ((127 / survivalPenalty) * targetCost * 0.1));
-  if (!dryRun) updateMetricsView(len, cc, lastCount, survivalPenalty);
+	var sp = (survivalPenalty==0 ? 0 : ((127 / survivalPenalty) * targetCost * 0.1));
+    lastRunCost = len * stepCount + sp;
+  if (!dryRun) updateMetricsView(len, cc, lastCount, sp);
         // Append this run's output and trace to rolling history (cap at HISTORY_LIMIT, 0 = most recent)
     if (!dryRun) {
     // Ensure age array matches current program length
