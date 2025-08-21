@@ -316,7 +316,7 @@ function toggleAuto () {
   targetCost = getTargetCostInput();
   if (survivalMode) {
     const code = document.getElementById("program").value.trim();
-    const m = averageMetrics(code);
+    const m = runGetAverageMetrics(code);
     targetSteps = m.avgSteps;
     if (targetCost === 0) {
       targetCost = m.avgCost;
@@ -941,7 +941,7 @@ function clearSavedPrograms() {
     document.getElementById("savedList").innerHTML = "";
 }
 
-function averageMetrics(code) {
+function runGetAverageMetrics(code) {
   const inputs = outputHistory.length ? outputHistory : [[]];
   let totalSteps = 0;
   let totalCost = 0;
@@ -987,7 +987,7 @@ function mutateProgram() {
   const origLen = toks.length;
   let origOut, origStep, origCost;
   if (survivalMode) {
-    const mOrig = averageMetrics(orig);
+    const mOrig = runGetAverageMetrics(orig);
     origOut = mOrig.firstOut;
     origStep = mOrig.avgSteps;
     origCost = mOrig.avgCost;
@@ -1037,7 +1037,7 @@ function mutateProgram() {
       inertiaVal = totalAttempts;
       let newOut, measure;
       if (survivalMode) {
-        const mNew = averageMetrics(newCode);
+        const mNew = runGetAverageMetrics(newCode);
         newOut = mNew.firstOut;
         measure = mNew.avgCost;
       } else {
