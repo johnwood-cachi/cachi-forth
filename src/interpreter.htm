@@ -39,6 +39,7 @@
   <button onclick="computePerturbationIndex()">Calc Inertia</button>
   <button onclick="computeSelectedCost()">Calc Cost</button>
   <button id="survivalBtn" onclick="toggleSurvival()">Survival Mode</button>
+  <label>Target Cost: <input type="number" id="targetCostInput" value="0" style="width:80px"></label>
   <div style='margin-bottom: 10px;'>
 &nbsp;Generation: <span id="mutCount">0</span>
 &nbsp;|&nbsp;Inertia:&nbsp;<span id="inertiaVal">0</span>
@@ -95,10 +96,20 @@ let lastRunCost = 0;
 const PERTURBATION_RUNS = 100;
 const PI_TOTAL_TIMEOUT_MS = 8000; // total time cap for a full PI computation
 const PI_MIN_TRIALS = 10;         // require at least this many samples per side
-	
+
 // Global per-instruction arrays
 let ageData = [];
 let costData = [];
+
+function getTargetCostInput() {
+  const el = document.getElementById("targetCostInput");
+  return el ? parseInt(el.value, 10) || 0 : 0;
+}
+
+function setTargetCostInput(val) {
+  const el = document.getElementById("targetCostInput");
+  if (el) el.value = Math.round(val);
+}
 
 const splitTok = t => {
 	if (t==null) return [ "", "" ];
@@ -207,9 +218,10 @@ function generateRandomProgram() {
 		if (stepCount > 50 && stepCount < MAX_INST) break;
 	}
 
-	document.getElementById("program").value = code;
-	resetAgeDataForProgram();
-	runProgram(false, { forceHistory: true });
+        document.getElementById("program").value = code;
+        resetAgeDataForProgram();
+        setTargetCostInput(0);
+        runProgram(false, { forceHistory: true, recalcTargetCost: true });
 }
 
   function getMetrics (tokenArr) {
@@ -294,7 +306,6 @@ function toggleAuto () {
     clearInterval(autoTimer);
     autoTimer = null;
     targetSteps = 0;
-    targetCost = 0;
     btn.textContent = "Start";
     try { if (window.Trace3D && typeof window.Trace3D.stop === 'function') window.Trace3D.stop(); } catch (e) { /* no-op */ }
     return;
@@ -302,14 +313,17 @@ function toggleAuto () {
 
   // ----- START -----
   btn.textContent = "Stop";
+  targetCost = getTargetCostInput();
   if (survivalMode) {
     const code = document.getElementById("program").value.trim();
     const m = averageMetrics(code);
     targetSteps = m.avgSteps;
-    targetCost = m.avgCost;
+    if (targetCost === 0) {
+      targetCost = m.avgCost;
+      setTargetCostInput(targetCost);
+    }
   } else {
     targetSteps = stepCount;
-    targetCost = 0;
   }
   resetAgeDataForProgram();
   try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
@@ -875,11 +889,17 @@ frameRef.idx = start;
 const savedPrograms = [];
 
 function runProgram(d = false, opts = {}) {
-	const code = document.getElementById("program").value.trim();
-	const addToHistory = (opts && opts.forceHistory) || programTouchedByUser;
-	runWithOutput(code, d, { addToHistory });
-	programTouchedByUser = false;
-	  try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
+  const code = document.getElementById("program").value.trim();
+  const userTC = getTargetCostInput();
+  targetCost = userTC;
+  const addToHistory = (opts && opts.forceHistory) || programTouchedByUser;
+  runWithOutput(code, d, { addToHistory });
+  programTouchedByUser = false;
+  if ((opts && opts.recalcTargetCost) || userTC === 0) {
+    targetCost = lastRunCost;
+    setTargetCostInput(targetCost);
+  }
+  try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
 }
 
 function saveProgram() {
@@ -937,6 +957,7 @@ function averageMetrics(code) {
 }
 
 function mutateProgram() {
+  targetCost = getTargetCostInput();
   const orig = document.getElementById("program").value.trim();
   if (!orig) return;
 
@@ -974,7 +995,7 @@ function mutateProgram() {
     origOut = runWithOutput(orig, false, {dryRun:true});
     origStep = stepCount;
   }
-  const baseline = survivalMode ? origCost : origStep;
+  const baseline = survivalMode ? (targetCost==0 ? origCost : targetCost) : (targetSteps==0 ? origStep : targetSteps);
   const maxDelta = Math.ceil(baseline * 0.05); // 5% margin
   const maxAttemptsPerDelta = 500;
 
