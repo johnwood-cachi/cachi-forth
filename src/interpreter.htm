@@ -48,6 +48,7 @@
 &nbsp;|&nbsp;@last:&nbsp;<span id="lastCount">0</span>
     &nbsp;|&nbsp;Steps:&nbsp;<span id="stepCount">0</span>
     &nbsp;|&nbsp;Cost:&nbsp;<span id="cost">0</span>
+    &nbsp;|&nbsp;Survival&nbsp;Penalty:&nbsp;<span id="survivalPenalty">0%</span>
     &nbsp;|&nbsp;<span id="hoverInstructionLabel" style="display:none">Instruction:&nbsp;<span id="instructionText"></span></span>
   </div>
   <div class="graph-trace-row">
@@ -287,6 +288,16 @@ function updateInertia () {        // refresh the UI
   if (el) el.textContent = mean.toFixed(1);      // one-decimal display
 }
 
+function updateSurvivalPenaltyView(percent) {
+  const el = document.getElementById("survivalPenalty");
+  if (!el) return;
+  if (percent == null || !isFinite(percent)) {
+    el.textContent = "0%";
+    return;
+  }
+  el.textContent = percent.toFixed(1) + "%";
+}
+
 function toggleAuto () {
   const btn = document.getElementById("autoBtn");
   if (!btn) return;
@@ -337,11 +348,16 @@ function toggleAuto () {
         }
         const avgCost = sumCost / recent.length;
         const avgMismatch = sumMismatch / recent.length;
+        // Update survival penalty UI during auto-run
+        updateSurvivalPenaltyView(avgMismatch * 10);
         const targetCost = len * targetSteps;
         if (avgMismatch === 0 && Math.round(avgCost) === Math.round(targetCost)) {
           toggleAuto();
           return;
         }
+      }
+      else {
+        updateSurvivalPenaltyView(0);
       }
     }
     mutateProgram();               // perform one mutation
@@ -908,6 +924,10 @@ function runProgram(d = false, opts = {}) {
 			const effective = avgCost + penalty;
 			const costEl = document.getElementById("cost");
 			if (costEl) costEl.textContent = Math.round(effective);
+			// Show survival penalty percentage (penalty is 10% * mismatch)
+			updateSurvivalPenaltyView(avgMismatch * 10);
+		} else {
+			updateSurvivalPenaltyView(0);
 		}
 	}
 }
@@ -1345,6 +1365,8 @@ window.onload = () => {
     chk.addEventListener('change', () => {
       if (typeof survivalMode !== 'undefined') survivalMode = !!chk.checked;
       try { localStorage.setItem('survivalMode', chk.checked ? '1' : '0'); } catch (e) {}
+      // Reset survival penalty display on toggle
+      updateSurvivalPenaltyView(0);
     });
   }
 	// show Instruction label when hovering over the heatmap and update based on X
