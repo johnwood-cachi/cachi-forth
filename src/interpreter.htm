@@ -37,7 +37,9 @@
   <button onclick="clearSavedPrograms()">Clear</button>
   <button id="autoBtn" onclick="toggleAuto()">Start</button>
   <button onclick="computePerturbationIndex()">Calc Inertia</button>
-  <button onclick="computeSelectedCost()">Calc Cost</button>
+    <label style="margin-left:10px;">
+    <input type="checkbox" id="survivalModeChk"> Survival Mode
+  </label>
   <div style='margin-bottom: 10px;'>
 &nbsp;Generation: <span id="mutCount">0</span>
 &nbsp;|&nbsp;Inertia:&nbsp;<span id="inertiaVal">0</span>
@@ -90,6 +92,11 @@ const PERTURBATION_RUNS = 100;
 const PI_TOTAL_TIMEOUT_MS = 8000; // total time cap for a full PI computation
 const PI_MIN_TRIALS = 10;         // require at least this many samples per side
 	
+	// Survival mode constants/state
+	const SURVIVAL_INPUTS_TO_TEST = 10;
+	let inputHistory = [];
+	let survivalMode = false;
+	
 // Global per-instruction arrays
 let ageData = [];
 let costData = [];
@@ -117,7 +124,7 @@ function randNonNumberToken(valid = funcNames) {
 const isControl = (tok) => {
   const [b] = splitTok(tok);
   return b === "loop" || b === "ifg" || b === "ifl" ||
-         b.startsWith("@") ||                      // function call
+         (b.startsWith("@") && b.length > 1) ||                      // function call
          (b.startsWith("branch") && b.length === 7);
 };
 
@@ -304,6 +311,39 @@ function toggleAuto () {
       toggleAuto();
       return;
     }
+    if (typeof survivalMode !== 'undefined' && survivalMode && typeof inputHistory !== 'undefined') {
+      const code = document.getElementById("program").value.trim();
+      const toks = code ? code.split(/\s+/) : [];
+      const len = toks.length;
+      const recent = inputHistory.slice(-SURVIVAL_INPUTS_TO_TEST);
+      if (recent.length > SURVIVAL_INPUTS_TO_TEST) {
+        let sumCost = 0;
+        let sumMismatch = 0;
+        for (let i = 0; i < recent.length; i++) {
+          const seed = recent[i];
+          const outStr = runWithOutput(code, false, { dryRun: true, inputSeed: seed });
+          const stepsHere = stepCount;
+          sumCost += (len * stepsHere);
+          const target = (seed && seed.length >= 2 && seed[0] === seed[1]) ? 127 : 0;
+          let actual = 0;
+          if (outStr && typeof outStr === 'string' && outStr.trim()) {
+            const parts = outStr.trim().split(/\s+/);
+            const last = parts[parts.length - 1];
+            const num = parseInt(last, 10);
+            if (!isNaN(num)) actual = CLAMP(num);
+          }
+          const mismatch = Math.min(1, Math.abs(actual - target) / 127);
+          sumMismatch += mismatch;
+        }
+        const avgCost = sumCost / recent.length;
+        const avgMismatch = sumMismatch / recent.length;
+        const targetCost = len * targetSteps;
+        if (avgMismatch === 0 && Math.round(avgCost) === Math.round(targetCost)) {
+          toggleAuto();
+          return;
+        }
+      }
+    }
     mutateProgram();               // perform one mutation
     mutCount++;
     updateMutCount();
@@ -455,6 +495,13 @@ function runWithOutput(src, debug = false, opts = {}) {
 		blockStack: [],
 		fn: ""
 	}];
+
+	// Seed initial input stack: always 4 random clamped numbers unless provided via opts.inputSeed
+	const providedSeed = Array.isArray(opts.inputSeed) ? opts.inputSeed.slice(0, 4) : null;
+	const usedInput = providedSeed && providedSeed.length === 4
+		? providedSeed.map(v => CLAMP(v))
+		: [0,0,0,0].map(() => CLAMP(Math.floor(Math.random() * 128)));
+	threads[0].stack.push(...usedInput);
 	const out = [];
 	const outHTML = [],
 		vals = [],
@@ -796,15 +843,19 @@ frameRef.idx = start;
     recomputeCostDataForCode(src);
     // Snapshot current heat map entry and unshift to top (only when adding to graph history)
     if (addToHistory) {
-      graphHistory.unshift({ costs: [...costData], ages: [...ageData], program: src });
+      graphHistory.unshift({ costs: [...costData], ages: [...ageData], program: src, input: (typeof usedInput !== 'undefined' ? usedInput.slice() : []) });
       if (graphHistory.length > MAX_GRAPH_ROWS) graphHistory.pop();
     }
  	outputHistory.push([...out]);
- 	outputInertia.push(inertiaVal || 0);
- 	outputColorHistory.push([]);
- 	outputTitleHistory.push([]);
- 	if (outputHistory.length > 20) outputHistory.shift();
- 	if (outputInertia.length > 20) outputInertia.shift();
+    if (typeof inputHistory !== 'undefined') {
+      inputHistory.push((typeof usedInput !== 'undefined' ? usedInput.slice() : []));
+      if (inputHistory.length > 20) inputHistory.shift();
+    }
+    outputInertia.push(inertiaVal || 0);
+    outputColorHistory.push([]);
+    outputTitleHistory.push([]);
+    if (outputHistory.length > 20) outputHistory.shift();
+    if (outputInertia.length > 20) outputInertia.shift();
      if (outputColorHistory.length > 20) outputColorHistory.shift();
      if (outputTitleHistory.length > 20) outputTitleHistory.shift();
      // new: store execution trace row for graph
@@ -822,9 +873,43 @@ const savedPrograms = [];
 function runProgram(d = false, opts = {}) {
 	const code = document.getElementById("program").value.trim();
 	const addToHistory = (opts && opts.forceHistory) || programTouchedByUser;
-	runWithOutput(code, d, { addToHistory });
+	const currentSeed = [0,0,0,0].map(() => CLAMP(Math.floor(Math.random() * 128)));
+	const runOutStr = runWithOutput(code, d, { addToHistory, inputSeed: currentSeed });
 	programTouchedByUser = false;
 	  try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
+
+	if (typeof survivalMode !== 'undefined' && survivalMode) {
+		const ta = document.getElementById("program");
+		const toks = (ta && ta.value.trim()) ? ta.value.trim().split(/\s+/) : [];
+		const len = toks.length;
+		const recent = (typeof inputHistory !== 'undefined' ? inputHistory : []).slice(-SURVIVAL_INPUTS_TO_TEST);
+		if (recent.length > 0) {
+			let sumCost = 0;
+			let sumMismatch = 0;
+			for (let i = 0; i < recent.length; i++) {
+				const seed = recent[i];
+				const outStr = runWithOutput(code, false, { dryRun: true, inputSeed: seed });
+				const stepsHere = stepCount;
+				sumCost += (len * stepsHere);
+				const target = (seed && seed.length >= 2 && seed[0] === seed[1]) ? 127 : 0;
+				let actual = 0;
+				if (outStr && typeof outStr === 'string' && outStr.trim()) {
+					const parts = outStr.trim().split(/\s+/);
+					const last = parts[parts.length - 1];
+					const num = parseInt(last, 10);
+					if (!isNaN(num)) actual = CLAMP(num);
+				}
+				const mismatch = Math.min(1, Math.abs(actual - target) / 127);
+				sumMismatch += mismatch;
+			}
+			const avgCost = sumCost / recent.length;
+			const avgMismatch = sumMismatch / recent.length;
+			const penalty = avgMismatch * (0.10 * avgCost);
+			const effective = avgCost + penalty;
+			const costEl = document.getElementById("cost");
+			if (costEl) costEl.textContent = Math.round(effective);
+		}
+	}
 }
 
 function saveProgram() {
@@ -1252,6 +1337,16 @@ window.onload = () => {
 	updateMutCount();   // initialise counter to 0 on first load
   const progEl = document.getElementById("program");
   if (progEl) progEl.addEventListener('input', () => { programTouchedByUser = true; resetAgeDataForProgram(); });
+  const chk = document.getElementById('survivalModeChk');
+  if (chk) {
+    const saved = (function(){ try { return localStorage.getItem('survivalMode') === '1'; } catch(e){ return false; } })();
+    chk.checked = !!saved;
+    if (typeof survivalMode !== 'undefined') survivalMode = !!saved;
+    chk.addEventListener('change', () => {
+      if (typeof survivalMode !== 'undefined') survivalMode = !!chk.checked;
+      try { localStorage.setItem('survivalMode', chk.checked ? '1' : '0'); } catch (e) {}
+    });
+  }
 	// show Instruction label when hovering over the heatmap and update based on X
 	const graph = document.getElementById("graph");
 	if (graph) {
