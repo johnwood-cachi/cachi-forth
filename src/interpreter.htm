@@ -163,7 +163,7 @@ function randToken(valid = funcNames){
   if(r < 0.5) return (Math.floor(Math.random()*256) - 127).toString();
   // 25% chance: common ops with heavier weight on `out`
   if(r < 0.75){
-    const fav = ["dup","swap","bit", "bval", "@random", "@time", "drop","out","out","out", "@last", "prune", "prune"];
+    const fav = ["dup","swap","bit", "bval", "drop", "prune"];
     return fav[Math.floor(Math.random()*fav.length)];
   }
   // 25% chance: control / function tokens
