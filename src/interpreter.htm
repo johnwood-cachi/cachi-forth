@@ -996,81 +996,128 @@ function mutateProgram() {
     alert("No mutable tokens available (all protected or special).");
     return;
   }
-  
+
   const origLen = toks.length;
-  const origOut = runWithOutput(orig, false, {dryRun:true});
+
+  // Baseline target cost (including survival penalty if enabled)
+  const prevStepCount0 = stepCount;
+  const prevTargetSteps0 = targetSteps;
+  const prevBitCounter0 = bitCounter;
+  runWithOutput(orig, false, { dryRun: true });
   const origStep = stepCount;
-  const maxStepDelta = Math.ceil(origStep * 0.05); // 5% margin on steps
-  const maxAttemptsPerDelta = 500;
-
-  let deltaTokens = 1;
-  let totalAttempts = 0; // count how many mutation attempts are needed until one is accepted
-
-  while (deltaTokens <= mutableIndices.length) {
-    for (let attempt = 0; attempt < maxAttemptsPerDelta; attempt++) {
-      let mut = [...toks];
-      const indices = new Set();
-      const targetCount = Math.min(deltaTokens, mutableIndices.length);
-      while (indices.size < targetCount) {
-        const idx = mutableIndices[Math.floor(Math.random() * mutableIndices.length)];
-        indices.add(idx);
+  const baselineSteps = (targetSteps && targetSteps > 0) ? targetSteps : origStep;
+  let targetEffectiveCost = origLen * baselineSteps;
+  if (typeof survivalMode !== 'undefined' && survivalMode && Array.isArray(inputHistory)) {
+    const recent0 = inputHistory.slice(-SURVIVAL_INPUTS_TO_TEST);
+    if (recent0.length > 0) {
+      let sumCost0 = 0;
+      let sumMismatch0 = 0;
+      for (let i = 0; i < recent0.length; i++) {
+        const seed = recent0[i];
+        const outStr = runWithOutput(orig, false, { dryRun: true, inputSeed: seed });
+        const stepsHere = stepCount;
+        sumCost0 += (origLen * stepsHere);
+        const target = (seed && seed.length >= 2 && seed[0] === seed[1]) ? 127 : 0;
+        let actual = 0;
+        if (outStr && typeof outStr === 'string' && outStr.trim()) {
+          const parts = outStr.trim().split(/\s+/);
+          const last = parts[parts.length - 1];
+          const num = parseInt(last, 10);
+          if (!isNaN(num)) actual = CLAMP(num);
+        }
+        const mismatch = Math.min(1, Math.abs(actual - target) / 127);
+        sumMismatch0 += mismatch;
       }
-      let involvesCommand = false;
-      for (const idx of indices) {
-	let newTok;
-        let oldTok = mut[idx];
-        do {
-          newTok = randToken();
-        } while (newTok === oldTok);
-        if (isCommandToken(oldTok) || isCommandToken(newTok)) involvesCommand = true;
-        mut[idx] = newTok;
-      }
-      // Ensure at least one mutated position involves a command
-      if (!involvesCommand) {
-        const forceIdx = Array.from(indices)[Math.floor(Math.random() * indices.size)];
-        let forced;
-        do {
-          forced = randNonNumberToken();
-        } while (forced === toks[forceIdx]);
-        mut[forceIdx] = forced;
-        involvesCommand = true;
-      }
+      const avgCost0 = sumCost0 / recent0.length;
+      const avgMismatch0 = sumMismatch0 / recent0.length;
+      const penalty0 = avgMismatch0 * (0.10 * avgCost0);
+      targetEffectiveCost = avgCost0 + penalty0;
+    }
+  }
+  stepCount = prevStepCount0; targetSteps = prevTargetSteps0; bitCounter = prevBitCounter0;
 
-      const newCode = mut.join(" ");
-      totalAttempts++;
-      inertiaVal = totalAttempts;
-      const newOut = runWithOutput(newCode, false, {dryRun:true});
-      const newStep = stepCount;
- 
-      if (
-        Math.abs(newStep - (targetSteps==0 ? origStep : targetSteps)) <= maxStepDelta &&
-        newOut !== origOut &&
-        mut.length === origLen
-      ) {
-        // Record inertia as attempts needed until an accepted mutation
-        inertiaVal = totalAttempts;
-        inertiaHist.push(inertiaVal);
-        if (inertiaHist.length > INERTIA_WINDOW) inertiaHist.shift();
-        updateInertia();
+  let bestDeviation = Infinity;
+  let bestCandidates = [];
+  let totalAttempts = 0;
 
-        // Update age data: reset mutated indices to 0, increment others (max 300)
-        updateAgeDataOnMutation(origLen, indices);
+  // Try replacing each mutable instruction once; score deviation from target cost
+  for (let mi = 0; mi < mutableIndices.length; mi++) {
+    const idx = mutableIndices[mi];
+    const mut = [...toks];
+    const oldTok = mut[idx];
+    let newTok;
+    do { newTok = randToken(); } while (newTok === oldTok);
+    mut[idx] = newTok;
 
-        document.getElementById("program").value = newCode;
-        runProgram(false, { forceHistory: true });
-        return;
+    const candidateCode = mut.join(" ");
+    totalAttempts++;
+
+    const prevStepCount = stepCount;
+    const prevTargetSteps = targetSteps;
+    const prevBitCounter = bitCounter;
+
+    let effective = null;
+    if (typeof survivalMode !== 'undefined' && survivalMode && Array.isArray(inputHistory) && inputHistory.length > 0) {
+      const recent = inputHistory.slice(-SURVIVAL_INPUTS_TO_TEST);
+      if (recent.length > 0) {
+        let sumCost = 0;
+        let sumMismatch = 0;
+        const len = mut.length;
+        for (let i = 0; i < recent.length; i++) {
+          const seed = recent[i];
+          const outStr = runWithOutput(candidateCode, false, { dryRun: true, inputSeed: seed });
+          const stepsHere = stepCount;
+          sumCost += (len * stepsHere);
+          const target = (seed && seed.length >= 2 && seed[0] === seed[1]) ? 127 : 0;
+          let actual = 0;
+          if (outStr && typeof outStr === 'string' && outStr.trim()) {
+            const parts = outStr.trim().split(/\s+/);
+            const last = parts[parts.length - 1];
+            const num = parseInt(last, 10);
+            if (!isNaN(num)) actual = CLAMP(num);
+          }
+          const mismatch = Math.min(1, Math.abs(actual - target) / 127);
+          sumMismatch += mismatch;
+        }
+        const avgCost = sumCost / recent.length;
+        const avgMismatch = sumMismatch / recent.length;
+        const penalty = avgMismatch * (0.10 * avgCost);
+        effective = avgCost + penalty;
       }
     }
-    deltaTokens++;
+    if (effective == null) {
+      runWithOutput(candidateCode, false, { dryRun: true });
+      const steps = stepCount;
+      const len = mut.length;
+      effective = len * steps;
+    }
+
+    // restore globals affected by dry runs
+    stepCount = prevStepCount; targetSteps = prevTargetSteps; bitCounter = prevBitCounter;
+
+    const deviation = Math.abs(effective - targetEffectiveCost);
+    if (deviation < bestDeviation - 1e-6) {
+      bestDeviation = deviation;
+      bestCandidates = [{ idx, token: newTok, code: candidateCode }];
+    } else if (Math.abs(deviation - bestDeviation) <= 1e-6) {
+      bestCandidates.push({ idx, token: newTok, code: candidateCode });
+    }
   }
 
-  // No acceptable mutation found: record the inertia as total attempts tried
-  inertiaVal = totalAttempts;
-  inertiaHist.push(inertiaVal);
-  if (inertiaHist.length > INERTIA_WINDOW) inertiaHist.shift();
-  updateInertia();
+  if (bestCandidates.length > 0) {
+    const chosen = bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
+    updateAgeDataOnMutation(origLen, new Set([chosen.idx]));
 
-  alert("No acceptable mutation found within constraints.");
+    // Record inertia as number of dry-run attempts in this exhaustive pass
+    inertiaVal = totalAttempts;
+    inertiaHist.push(inertiaVal);
+    if (inertiaHist.length > INERTIA_WINDOW) inertiaHist.shift();
+    updateInertia();
+
+    document.getElementById("program").value = chosen.code;
+    runProgram(false, { forceHistory: true });
+    return;
+  }
 }
 
 // --- Perturbation Index helpers ---
