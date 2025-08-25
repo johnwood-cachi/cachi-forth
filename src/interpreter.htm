@@ -651,13 +651,32 @@ function runWithOutput(src, debug = false, opts = {}) {
 			inst++;
 			if (debug) console.log(`[T${th.id}] ${tok} [${S.join(',')}]`);
 			// primitives
-			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "bit", "bval", "prune"].includes(tok)) {
-				if (tok === "dup") S.push(S.at(-1) ?? 0);
+			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "bit", "bval", "prune"].includes(tok) || (tok.startsWith("dup") && tok.length === 4) || (tok.startsWith("swap") && tok.length === 5)) {
+				if (tok === "dup") {
+					const v = pop();
+					S.push(v, v);
+				}
+				else if (tok.length === 4 && tok.startsWith("dup")) {
+					let N = +tok[3];
+					if (!(N >= 1 && N <= 9)) N = 1;
+					const vals = [];
+					for (let i = 0; i < N; i++) vals.unshift(pop());
+					S.push(...vals, ...vals);
+				}
 				else if (tok === "swap") {
 					let b = pop(),
 						a = pop();
 					S.push(b, a);
-				} else if (tok === "drop") pop();
+				}
+				else if (tok.length === 5 && tok.startsWith("swap")) {
+					let N = +tok[4];
+					if (!(N >= 1 && N <= 9)) N = 1;
+					const v = pop();
+					let insertAt = S.length - N;
+					if (insertAt < 0) insertAt = 0;
+					S.splice(insertAt, 0, v);
+				}
+				else if (tok === "drop") pop();
 				else if (tok === "bit") bitCounter++;
 				else if (tok === "bval") { S.push(bitCounter); bitCounter = 0; }
 				else if (tok === "prune") {
