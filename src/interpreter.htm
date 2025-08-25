@@ -904,9 +904,9 @@ frameRef.idx = start;
 					// Capture outputs from this iteration: collect values pushed by the seed beyond base stack
 					let produced = [];
 					if (S.length >= ctx.baseLen) {
-						// Try simple slice first
+						// Try simple slice first (captures items appended above the base)
 						produced = S.slice(ctx.baseLen);
-						// If stack mutated non-trivially, fall back to diffing suffix against baseStack
+						// If base portion changed, attempt to capture trailing suffix beyond the last common element
 						let mismatch = false;
 						for (let i = 0; i < ctx.baseLen && i < S.length; i++) {
 							if (S[i] !== ctx.baseStack[i]) { mismatch = true; break; }
@@ -916,6 +916,12 @@ frameRef.idx = start;
 							let j = ctx.baseStack.length - 1;
 							while (j >= 0 && k >= 0 && S[j] === ctx.baseStack[j]) { j--; k--; }
 							produced = S.slice(j + 1);
+						}
+					}
+					// Fallback: if nothing new was appended but some base element changed, capture the top-most changed base element.
+					if (!produced.length) {
+						for (let i = Math.min(ctx.baseLen, S.length) - 1; i >= 0; i--) {
+							if (S[i] !== ctx.baseStack[i]) { produced = [ S[i] ]; break; }
 						}
 					}
 					if (produced.length) ctx.outputs.push(...produced);
@@ -934,8 +940,14 @@ frameRef.idx = start;
 							th.indices.splice(th.pc, 0, ...ctx.seed.indices, ctx.instrIp);
 						}
 					} else {
-						// All iterations complete: leave concatenated outputs on main stack
-						if (ctx.outputs.length) S.push(...ctx.outputs);
+						// All iterations complete: if we captured results, replace the main stack with them;
+						// otherwise, restore the original base stack.
+						S.length = 0;
+						if (ctx.outputs.length) {
+							S.push(...ctx.outputs);
+						} else {
+							S.push(...ctx.baseStack);
+						}
 						stackArr.splice(ctxIdx, 1);
 					}
 				}
