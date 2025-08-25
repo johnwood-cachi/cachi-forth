@@ -507,6 +507,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 	const functions = {};
 	const { tokens: main, indices: mainIdx } = parseDefs(tokens, functions);
 	let nextThreadId = 0; // stable, monotonic thread IDs per run
+	let nextMapId = 0;    // unique IDs for map contexts per run
 	const threads = [{
 		id: nextThreadId++,
 		pc: 0,
@@ -625,7 +626,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 		    if (blk.type === "loop" || blk.type === "once") th.callStack.pop();
 
                     if (blk.type === "loop" && --blk.remaining > 0) {
-            			th.blockStack.push({
+            		th.blockStack.push({
 							...blk,
 							idx: 0
 							});
@@ -729,7 +730,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 			};
 
 			if (tok === "loop" || tok === "ifg" || tok === "ifl") {
-		                var startBeforeCollect = frameRef.idx - 1;
+			                var startBeforeCollect = frameRef.idx - 1;
 				const blk = collect(tok, frameRef);
 				if (tok === "loop") {
 					const n = pop();
@@ -753,7 +754,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 						tokens: blk.tokens,
               indices: blk.indices,
 						idx: 0
-				  			}); 
+			  				}); 
 						th.callStack.push(labTok || tok.toUpperCase()); 
 					}
 				}
@@ -805,11 +806,11 @@ function runWithOutput(src, debug = false, opts = {}) {
 				const N = +tok[6];
        			if (N >= 2 && N <= 5) {
        				const seeds = [];
-                      const seedStartIndex = frameRef.idx;
-                      
-                  for (let i = 0; i < N; i++) {
-                    seeds.push( collectSeed(frameRef) );     // collectSeed returns { tokens, indices }
-                  }
+                     const seedStartIndex = frameRef.idx;
+                     
+                 for (let i = 0; i < N; i++) {
+                   seeds.push( collectSeed(frameRef) );     // collectSeed returns { tokens, indices }
+                 }
 const start = seedStartIndex;                // idx value you saved *before* the for-loop
 const end   = frameRef.idx;                  // idx after collecting all N seeds
 frameRef.tokens.splice(start, end - start);  // remove original seed tokens
@@ -852,60 +853,90 @@ frameRef.idx = start;
 			if (tok.startsWith("map") && tok.length === 4) {
 				const N = +tok[3];
 				if (N >= 2 && N <= 5) {
-					// Pop N values from the stack
+					// Pop N values and preserve order
 					const values = [];
-					for (let i = 0; i < N; i++) {
-						values.unshift(pop()); // unshift to maintain stack order
-					}
-					
-					// Save the current stack state after popping values
+					for (let i = 0; i < N; i++) values.unshift(pop());
+					// Snapshot base stack (after pops)
 					const baseStack = [...S];
-					
+					const baseLen = S.length;
 					// Collect the next instruction/block
 					const seedStartIndex = frameRef.idx;
 					const seed = collectSeed(frameRef);
-					
 					// Remove the collected seed from the current frame
 					const start = seedStartIndex;
 					const end = frameRef.idx;
 					frameRef.tokens.splice(start, end - start);
 					frameRef.indices.splice(start, end - start);
 					frameRef.idx = start;
-					
-					// If operating on main stream, adjust pc
-					if (frameRef.tokens === th.tokens) {
-						th.pc = start;
+					if (frameRef.tokens === th.tokens) th.pc = start;
+					// Prepare map context and begin first iteration inline
+					if (!th.mapCtxStack) th.mapCtxStack = [];
+					const mapId = nextMapId++;
+					const mapCtx = { id: mapId, values, seed, start, baseStack, baseLen, outputs: [], iterIndex: 0, instrIp: origIndex };
+					th.mapCtxStack.push(mapCtx);
+					// Reset stack to base and push first value
+					S.length = 0; S.push(...baseStack, values[0]);
+					// Insert seed tokens followed by sentinel `mapEnd:<id>`
+					if (th.blockStack.length) {
+						const top = th.blockStack[th.blockStack.length - 1];
+						top.tokens.splice(top.idx, 0, ...seed.tokens, `mapEnd:${mapId}`);
+						top.indices.splice(top.idx, 0, ...seed.indices, origIndex);
+					} else {
+						th.tokens.splice(th.pc, 0, ...seed.tokens, `mapEnd:${mapId}`);
+						th.indices.splice(th.pc, 0, ...seed.indices, origIndex);
 					}
-					
-					// For each value, create a thread with the base stack plus the value
-					for (let i = 0; i < values.length; i++) {
-						const value = values[i];
-						
-						if (i === 0) {
-							// Use current thread for first value
-							S.push(value); // Push the value onto stack
-							
-							// Insert seed tokens into current position
-							const top = th.blockStack.length ? th.blockStack[th.blockStack.length - 1]
-							                                  : { tokens: th.tokens, indices: th.indices, idx: start };
-							top.tokens.splice(top.idx, 0, ...seed.tokens);
-							top.indices.splice(top.idx, 0, ...seed.indices);
-						} else {
-							// Clone thread with base stack state for remaining values
-							const clone = JSON.parse(JSON.stringify(th));
-							// Reset clone's stack to base state and add the value
-							clone.stack = [...baseStack, value];
-							
-							// Insert seed tokens
-							const top = clone.blockStack.length ? clone.blockStack[clone.blockStack.length - 1]
-							                                    : { tokens: clone.tokens, indices: clone.indices, idx: start };
-							top.tokens.splice(top.idx, 0, ...seed.tokens);
-							top.indices.splice(top.idx, 0, ...seed.indices);
-							
-							clone.pc = start;
-							clone.id = nextThreadId++;
-							threads.push(clone);
+				}
+				if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+				continue;
+			}
+
+			// Internal sentinel for map sequencing: `mapEnd:<id>`
+			if (tok === "mapEnd") {
+				const ctxId = labTok != null ? labTok.toString() : "";
+				const stackArr = th.mapCtxStack || [];
+				let ctxIdx = stackArr.length - 1;
+				let ctx = null;
+				for (; ctxIdx >= 0; ctxIdx--) {
+					const c = stackArr[ctxIdx];
+					if (c && c.id.toString() === ctxId) { ctx = c; break; }
+				}
+				if (ctx) {
+					// Capture outputs from this iteration: collect values pushed by the seed beyond base stack
+					let produced = [];
+					if (S.length >= ctx.baseLen) {
+						// Try simple slice first
+						produced = S.slice(ctx.baseLen);
+						// If stack mutated non-trivially, fall back to diffing suffix against baseStack
+						let mismatch = false;
+						for (let i = 0; i < ctx.baseLen && i < S.length; i++) {
+							if (S[i] !== ctx.baseStack[i]) { mismatch = true; break; }
 						}
+						if (mismatch) {
+							let k = S.length - 1;
+							let j = ctx.baseStack.length - 1;
+							while (j >= 0 && k >= 0 && S[j] === ctx.baseStack[j]) { j--; k--; }
+							produced = S.slice(j + 1);
+						}
+					}
+					if (produced.length) ctx.outputs.push(...produced);
+					// Restore base stack
+					S.length = 0; S.push(...ctx.baseStack);
+					// Next iteration or finalize
+					ctx.iterIndex++;
+					if (ctx.iterIndex < ctx.values.length) {
+						S.push(ctx.values[ctx.iterIndex]);
+						if (th.blockStack.length) {
+							const top = th.blockStack[th.blockStack.length - 1];
+							top.tokens.splice(top.idx, 0, ...ctx.seed.tokens, `mapEnd:${ctx.id}`);
+							top.indices.splice(top.idx, 0, ...ctx.seed.indices, ctx.instrIp);
+						} else {
+							th.tokens.splice(th.pc, 0, ...ctx.seed.tokens, `mapEnd:${ctx.id}`);
+							th.indices.splice(th.pc, 0, ...ctx.seed.indices, ctx.instrIp);
+						}
+					} else {
+						// All iterations complete: leave concatenated outputs on main stack
+						if (ctx.outputs.length) S.push(...ctx.outputs);
+						stackArr.splice(ctxIdx, 1);
 					}
 				}
 				if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
