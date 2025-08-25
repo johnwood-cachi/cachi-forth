@@ -153,7 +153,7 @@ function levenshtein(a, b) {
 
 /******************** TOKEN POOLS *********************/
 const instrPool = ["+", "-", "*", "/", "dup", "swap", "bit", "bval", "out", "prune"];
-const ctrlPool = ["loop", "ifg", "ifl", "branch2", "branch3", "branch4", "branch5"];
+const ctrlPool = ["loop", "ifg", "ifl", "branch2", "branch3", "branch4", "branch5", "map2", "map3", "map4", "map5"];
 const funcNames = ["func1", "func2", "func3", "func4", "func5"];
 
 /******************** RANDOM TOKEN / PROGRAM *********************/
@@ -168,7 +168,8 @@ function randToken(valid = funcNames){
   }
   // 25% chance: control / function tokens
   const branchTokens = ["branch2","branch3","branch4"]; // restrict to branch2‑4
-  const controlTokens = ["loop","ifg","ifl",...branchTokens];
+  const mapTokens = ["map2","map3","map4"];
+  const controlTokens = ["loop","ifg","ifl",...branchTokens, ...mapTokens];
   // Limit function space to first 3 names to keep total distinct functions small
   const limitedFuncs = valid.slice(0,3);
   const pool = [
