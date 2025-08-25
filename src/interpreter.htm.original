@@ -1,0 +1,1540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cachi‑Forth Toy Simulator</title>
+  <style> 
+	  a { color:lightblue; text-decoration: none; }
+    body{font-family:system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;background:black;color:#eee;padding:20px}
+    textarea{width:100%;height:200px;background:#222;color:#0f0;border:1px solid #555;padding:10px;font-size:14px;font-family:monospace}
+    button{margin:10px 10px 10px 0;padding:10px; font-size:0.8em;   background-color: #292727;
+    border: 1px solid #757171;
+    color: white;}
+    /* updated graph to half width and added companion 3D area */
+    #graph{background:#000;;width:50%;height:120px;display:block;margin-top:6px}
+    .graph-trace-row{display:flex;gap:10px}
+    #trace3d{background:#000;;width:50%;min-height:620px;max-height:620px;height:620px;display:block;margin-top:6px;position:relative;overflow:hidden}
+    #history{margin-top:20px;padding:10px;background:#111;border-top:1px solid #555}
+    .saved-entry{background:#222;margin-bottom:10px;padding:10px;border:1px solid #444;white-space:pre-wrap}
+	#program { height: 50px }
+
+  @media (max-width: 768px) {
+    .graph-trace-row { flex-direction: column; }
+    #trace3d { order: -1; width: 100%; }
+    #graph { width: 100%; }
+  }
+  </style>
+</head>
+<body>
+  <h1>Cachi‑Forth Toy Lab</h1>
+<p>Learn more about <a target=_blank href="https://www.cachi.wiki/p/cachi-forth-for-modeling-the-mind">Cachi-Forth here</a>.</p>
+  <textarea id="program" placeholder="Enter your Cachi‑Forth code..."></textarea><br>
+  <button onclick="runProgram()">Run</button>
+  <button onclick="generateRandomProgram()">Random</button>
+  <button onclick="saveProgram()">Save</button>
+  <button onclick="mutateProgram()">Mutate</button>
+  <button onclick="clearSavedPrograms()">Clear</button>
+  <button id="autoBtn" onclick="toggleAuto()">Start</button>
+  <button onclick="computePerturbationIndex()">Calc Inertia</button>
+    <label style="margin-left:10px;">
+    <input type="checkbox" id="survivalModeChk"> Survival Mode
+  </label>
+  <div style='margin-bottom: 10px;'>
+&nbsp;Generation: <span id="mutCount">0</span>
+&nbsp;|&nbsp;Inertia:&nbsp;<span id="inertiaVal">0</span>
+  &nbsp;|&nbsp;Len: &nbsp;<span id="progLen">0</span>
+&nbsp;|&nbsp;CC:&nbsp;<span id="ccVal">0</span>
+&nbsp;|&nbsp;@last:&nbsp;<span id="lastCount">0</span>
+    &nbsp;|&nbsp;Steps:&nbsp;<span id="stepCount">0</span>
+    &nbsp;|&nbsp;Cost:&nbsp;<span id="cost">0</span>
+    &nbsp;|&nbsp;Survival&nbsp;Penalty:&nbsp;<span id="survivalPenalty">0%</span>
+    &nbsp;|&nbsp;<span id="hoverInstructionLabel" style="display:none">Instruction:&nbsp;<span id="instructionText"></span></span>
+  </div>
+  <div class="graph-trace-row">
+    <svg id="graph"></svg>
+    <div id="trace3d"></div>
+  </div>
+<div id="labelsArea">
+  <h2>Labels</h2>
+  <div id="labelsList" style="white-space:pre-wrap"></div>
+</div>
+  <div id="history">
+    <h2>Saved Programs</h2>
+    <div id="savedList"></div>
+  </div>
+
+<script>
+/******************** CONSTANTS & HELPERS *********************/
+const MAX_INST = 2000;
+const ANCHOR_STEPS = 1;
+const CLAMP = v => ((v % 128) + 128) % 128;
+let LABELS = {};   // label-string  -> tokenIndex (-1 = missing)
+let EXECUTION_TRACE = [];
+const palette = ["#ff0", "#f0f", "#0ff", "#f80", "#0f0", "#08f", "#f44", "#fff", "#ccc", "#faa"];
+let traceHistory = [];
+let graphHistory = [];
+const MAX_GRAPH_ROWS = 50;
+const GRAPH_ROW_HEIGHT = 12;
+
+let programTouchedByUser = false;
+let autoTimer   = null;   // holds setInterval handle
+let mutCount    = 0;      // shown in UI
+const STEP_MS   = 200;    // mutation cadence (adjust to taste)
+let stepCount = 0;
+let stepPeg = 0;
+let bitCounter = 0;
+let outputHistory = [];
+let outputInertia = [];
+let targetSteps = 0;
+let outputColorHistory = [];
+let outputTitleHistory = [];
+const PERTURBATION_RUNS = 100;
+const PI_TOTAL_TIMEOUT_MS = 8000; // total time cap for a full PI computation
+const PI_MIN_TRIALS = 10;         // require at least this many samples per side
+	
+	// Survival mode constants/state
+	const SURVIVAL_INPUTS_TO_TEST = 10;
+	let inputHistory = [];
+	let survivalMode = false;
+	
+// Global per-instruction arrays
+let ageData = [];
+let costData = [];
+
+const splitTok = t => {
+	if (t==null) return [ "", "" ];
+  const idx = t.indexOf(':');
+  return idx === -1 ? [t, null] : [t.slice(0, idx), t.slice(idx + 1)];
+};
+
+// Helpers to classify tokens and generate command tokens
+const isNumberToken = (tok) => {
+  const [base] = splitTok(tok);
+  return /^-?\d+$/.test(base);
+};
+const isCommandToken = (tok) => !isNumberToken(tok);
+function randNonNumberToken(valid = funcNames) {
+  let t;
+  do {
+    t = randToken(valid);
+  } while (isNumberToken(t));
+  return t;
+}
+
+const isControl = (tok) => {
+  const [b] = splitTok(tok);
+  return b === "loop" || b === "ifg" || b === "ifl" ||
+         (b.startsWith("@") && b.length > 1) ||                      // function call
+         (b.startsWith("branch") && b.length === 7) ||
+         (b.startsWith("map") && b.length === 4);
+};
+
+function hashCode(str) {
+	let h = 0; 
+	for (let i = 0; i < str.length; i++) {
+		h = ((h << 5) - h) + str.charCodeAt(i);
+		h |= 0;
+	}
+	return h;
+}
+
+function levenshtein(a, b) {
+	const m = a.length,
+		n = b.length,
+		dp = Array.from({
+			length: m + 1
+		}, () => Array(n + 1));
+	for (let i = 0; i <= m; i++) dp[i][0] = i;
+	for (let j = 0; j <= n; j++) dp[0][j] = j;
+	for (let i = 1; i <= m; i++)
+		for (let j = 1; j <= n; j++) dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+	return dp[m][n];
+}
+
+/******************** TOKEN POOLS *********************/
+const instrPool = ["+", "-", "*", "/", "dup", "swap", "bit", "bval", "out", "prune"];
+const ctrlPool = ["loop", "ifg", "ifl", "branch2", "branch3", "branch4", "branch5", "map2", "map3", "map4", "map5"];
+const funcNames = ["func1", "func2", "func3", "func4", "func5"];
+
+/******************** RANDOM TOKEN / PROGRAM *********************/
+function randToken(valid = funcNames){
+  const r = Math.random();
+  // 50% chance: literal number
+  if(r < 0.5) return (Math.floor(Math.random()*256) - 127).toString();
+  // 25% chance: common ops with heavier weight on `out`
+  if(r < 0.75){
+    const fav = ["dup","swap","bit", "bval", "drop", "prune"];
+    return fav[Math.floor(Math.random()*fav.length)];
+  }
+  // 25% chance: control / function tokens
+  const branchTokens = ["branch2","branch3","branch4"]; // restrict to branch2‑4
+  const mapTokens = ["map2", "map3", "map4"]; // restrict to map2-4
+  const controlTokens = ["loop","ifg","ifl",...branchTokens,...mapTokens];
+  // Limit function space to first 3 names to keep total distinct functions small
+  const limitedFuncs = valid.slice(0,3);
+  const pool = [
+    ...instrPool,                 // + - * /
+    ...controlTokens,             // loop / ifg / ifl / branch2‑4
+    ...limitedFuncs.map(f => "@"+f),  // function calls (max 3)
+    ...limitedFuncs.map(f => ">"+f),  // declarations (max 3)
+    "end"                         // explicit end token
+  ];
+  return pool[Math.floor(Math.random()*pool.length)];
+}
+function generateRandomProgram() {
+	mutCount = 0;
+	updateMutCount();
+	inertiaVal = 0;
+	inertiaHist = [];
+	updateInertia();
+	if (autoTimer) toggleAuto();   // ensure auto-evolve halts on Clear
+	// Stop any ongoing 3D animation immediately
+	try { if (window.Trace3D && typeof window.Trace3D.stop === 'function') window.Trace3D.stop(); } catch (e) { /* no-op */ }
+
+	let code = "";
+	while (true) {
+		const tot = 50,
+			numFuncs = Math.floor(Math.random() * 4) + 1,
+			active = funcNames.slice(0, numFuncs);
+		const defs = [];
+		for (const name of active) {
+			defs.push(`>${name} ${randToken(active)} ${randToken(active)} ${randToken(active)} end`);
+		}
+		const toks = [];
+		while (toks.length < tot - defs.join(" ").split(/\s+/).length - 2) toks.push(randToken(active));
+		toks.push("out", "end");
+		code = defs.join("\n") + "\n" + toks.join(" ");
+
+		// Dry-run to measure steps without updating UI/trace
+		runWithOutput(code, false, { dryRun: true });
+		if (stepCount > 50 && stepCount < MAX_INST) break;
+	}
+
+	document.getElementById("program").value = code;
+	resetAgeDataForProgram();
+	runProgram(false, { forceHistory: true });
+}
+
+  function getMetrics (tokenArr) {
+  let cc = 1;                       // baseline path
+  let lastCount = 0;                // count of @last commands
+  for (const t of tokenArr) {
+    const [base] = splitTok(t);
+    if (base === "loop" || base === "ifg" || base === "ifl") cc += 1;
+    else if (base.startsWith("branch") && base.length === 7) {
+      const n = +base[6];
+      if (n >= 2 && n <= 5) cc += n - 1;  // branch2 ⇒ +1, branch3 ⇒ +2 …
+    }
+    else if (base.startsWith("map") && base.length === 4) {
+      const n = +base[3];
+      if (n >= 2 && n <= 5) cc += n - 1;  // map2 ⇒ +1, map3 ⇒ +2 …
+    }
+    else if (base === "@last") lastCount += 1;  // count @last commands
+  }
+  return { len: tokenArr.length, cc, lastCount };
+}
+
+function updateMetricsView (len, cc, lastCount) {
+  const lEl = document.getElementById("progLen");
+  const cEl = document.getElementById("ccVal");
+  const lastEl = document.getElementById("lastCount");
+  document.getElementById("stepCount").textContent = stepCount;
+  document.getElementById("cost").textContent = (len * stepCount);
+  if (lEl) lEl.textContent = len;
+  if (cEl) cEl.textContent = cc;
+  if (lastEl) lastEl.textContent = lastCount || 0;
+}
+
+// Count tokens in a code string
+function countTokens(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return 0;
+  return trimmed.split(/\s+/).length;
+}
+
+function updateMutCount () {
+  const el = document.getElementById("mutCount");
+  if (el) el.textContent = mutCount;
+}
+
+// Age data helpers
+function ensureAgeArraySized(len) {
+  if (ageData.length !== len) ageData = new Array(len).fill(0);
+}
+function resetAgeDataForProgram() {
+  const ta = document.getElementById("program");
+  const len = countTokens(ta ? ta.value : "");
+  ageData = new Array(len).fill(0);
+}
+function updateAgeDataOnMutation(len, mutatedIndexSet) {
+  ensureAgeArraySized(len);
+  const maxAge = 500;
+  for (let i = 0; i < len; i++) {
+    const isMutated = mutatedIndexSet && (typeof mutatedIndexSet.has === 'function' ? mutatedIndexSet.has(i) : (Array.isArray(mutatedIndexSet) && mutatedIndexSet.includes(i)));
+    if (isMutated) {
+      ageData[i] = 0;
+    } else {
+      ageData[i] = Math.min(maxAge, (ageData[i] || 0) + 1);
+    }
+  }
+}
+
+let inertiaVal = 0;                // last-measured inertia (resistance to change)
+const INERTIA_WINDOW = 20;        // size of the rolling window (last ~20 values)
+let   inertiaHist = [];        // holds the most-recent values
+	
+function updateInertia () {        // refresh the UI
+  // compute mean of the window (default 0 if empty)
+  const mean = inertiaHist.length
+        ? inertiaHist.reduce((s,v) => s + v, 0) / inertiaHist.length
+        : 0;
+
+  const el = document.getElementById("inertiaVal");
+  if (el) el.textContent = mean.toFixed(1);      // one-decimal display
+}
+
+function updateSurvivalPenaltyView(percent) {
+  const el = document.getElementById("survivalPenalty");
+  if (!el) return;
+  if (percent == null || !isFinite(percent)) {
+    el.textContent = "0%";
+    return;
+  }
+  el.textContent = percent.toFixed(1) + "%";
+}
+
+function toggleAuto () {
+  const btn = document.getElementById("autoBtn");
+  if (!btn) return;
+
+  if (autoTimer) {                 // ----- STOP -----
+    clearInterval(autoTimer);
+    autoTimer = null;
+    targetSteps = 0;
+    btn.textContent = "Start";
+    try { if (window.Trace3D && typeof window.Trace3D.stop === 'function') window.Trace3D.stop(); } catch (e) { /* no-op */ }
+    return;
+  }
+
+  // ----- START -----
+  btn.textContent = "Stop";
+  targetSteps = stepCount;
+  resetAgeDataForProgram();
+  try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
+  autoTimer = setInterval(() => {
+    const lost = Object.values(LABELS).some(v => v === -1);
+    if (lost) {                    // stop if any label vanished
+      toggleAuto();
+      return;
+    }
+    if (typeof survivalMode !== 'undefined' && survivalMode && typeof inputHistory !== 'undefined') {
+      const code = document.getElementById("program").value.trim();
+      const toks = code ? code.split(/\s+/) : [];
+      const len = toks.length;
+      const recent = inputHistory.slice(-SURVIVAL_INPUTS_TO_TEST);
+      if (recent.length > SURVIVAL_INPUTS_TO_TEST) {
+        let sumCost = 0;
+        let sumMismatch = 0;
+        for (let i = 0; i < recent.length; i++) {
+          const seed = recent[i];
+          const outStr = runWithOutput(code, false, { dryRun: true, inputSeed: seed });
+          const stepsHere = stepCount;
+          sumCost += (len * stepsHere);
+          const target = (seed && seed.length >= 2 && seed[0] === seed[1]) ? 127 : 0;
+          let actual = 0;
+          if (outStr && typeof outStr === 'string' && outStr.trim()) {
+            const parts = outStr.trim().split(/\s+/);
+            const last = parts[parts.length - 1];
+            const num = parseInt(last, 10);
+            if (!isNaN(num)) actual = CLAMP(num);
+          }
+          const mismatch = Math.min(1, Math.abs(actual - target) / 127);
+          sumMismatch += mismatch;
+        }
+        const avgCost = sumCost / recent.length;
+        const avgMismatch = sumMismatch / recent.length;
+        // Update survival penalty UI during auto-run
+        updateSurvivalPenaltyView(avgMismatch * 10);
+        const targetCost = len * targetSteps;
+        if (avgMismatch === 0 && Math.round(avgCost) === Math.round(targetCost)) {
+          toggleAuto();
+          return;
+        }
+      }
+      else {
+        updateSurvivalPenaltyView(0);
+      }
+    }
+    mutateProgram();               // perform one mutation
+    mutCount++;
+    updateMutCount();
+  }, STEP_MS);
+}
+
+function updateLabelsView () {
+  const list = document.getElementById("labelsList");
+  if (!list) return;
+
+  const html = Object.keys(LABELS)
+    .sort()                                    // alphabetical for stability
+    .map(k => {
+      const v = LABELS[k];
+      const col = v === -1 ? "#f44" : "#eee";  // red if missing
+      return `<span style="color:${col}">${k}:${v}</span>`;
+    })
+    .join("  ");                               // two nbsp’s for spacing
+
+  list.innerHTML = html;
+}
+/******************** GRAPH RENDER *********************/
+function drawGraph() {
+	const svg = document.getElementById("graph");
+	if (!svg) return;
+
+	const ta = document.getElementById("program");
+	const tokens = ta && ta.value.trim() ? ta.value.trim().split(/\s+/) : [];
+	const n = tokens.length;
+
+	// If no history yet and no tokens, nothing to draw
+	if (graphHistory.length === 0 && n === 0) {
+		svg.innerHTML = "";
+		svg.style.height = "0px";
+		return;
+	}
+
+	const W = svg.clientWidth || 600;
+
+	function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+	function costToColor(percent) {
+		const t = clamp01((percent || 0) / 100);
+		const r = Math.round(255 * t);
+		const g = 0;
+		const b = Math.round(255 * (1 - t));
+		return `rgb(${r},${g},${b})`;
+	}
+	function ageToOpacity(age) {
+		const ratio = clamp01((age || 0) / 500);
+		return 0.1 + 0.9 * ratio;
+	}
+
+	let g = "";
+
+	if (graphHistory.length === 0) {
+		// Fallback: draw current single row
+		// Ensure per-instruction arrays match current program length
+		ensureAgeArraySized(n);
+		if (!costData || costData.length !== n) costData = new Array(n).fill(0);
+		const step = n > 0 ? (W / n) : W;
+		for (let i = 0; i < n; i++) {
+			const x = i * step;
+			const col = costToColor(costData[i] || 0);
+			const a = ageToOpacity(ageData[i] || 0);
+			g += `<rect x='${x}' y='0' width='${Math.max(1, step - 1)}' height='${GRAPH_ROW_HEIGHT}' fill='${col}' fill-opacity='${a}'></rect>`;
+		}
+		svg.style.height = `${GRAPH_ROW_HEIGHT}px`;
+		svg.innerHTML = g;
+		return;
+	}
+
+	// Draw multiple rows from history; newest row is at index 0 (top)
+	const rows = Math.min(graphHistory.length, MAX_GRAPH_ROWS);
+	for (let r = 0; r < rows; r++) {
+		const entry = graphHistory[r];
+		const len = entry && Array.isArray(entry.costs) ? entry.costs.length : 0;
+		if (len === 0) continue;
+		const step = W / len;
+		const y = r * GRAPH_ROW_HEIGHT;
+		for (let i = 0; i < len; i++) {
+			const x = i * step;
+			const col = costToColor(entry.costs[i] || 0);
+			const a = ageToOpacity(entry.ages[i] || 0);
+			g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${GRAPH_ROW_HEIGHT}' fill='${col}' fill-opacity='${a}'></rect>`;
+		}
+	}
+
+	svg.style.height = `${rows * GRAPH_ROW_HEIGHT}px`;
+	svg.innerHTML = g;
+}
+
+function collectSeed(frame) {
+  const opens = ["loop", "ifg", "ifl"];      // tokens that own an `end`
+  // grab the seed’s first token (and its original index)
+  const firstTok = frame.tokens[frame.idx];
+  const firstIdx = frame.indices[frame.idx];
+  frame.idx++;
+  const blockTokens = [firstTok];               // start building the seed array
+  const blockIndices = [firstIdx];
+ 
+  // ---- NEW: decide if we need to collect a whole control block ----
+  const [base] = splitTok(firstTok);
+  if (!opens.includes(base)) {
+    // Plain literal / primitive / @call / branchN token – seed is just one token.
+    return { tokens: blockTokens, indices: blockIndices };
+  }
+
+  // ---- Existing behaviour for real control blocks ----
+  let depth = 1;
+  while (frame.idx < frame.tokens.length && depth) {
+    const t = frame.tokens[frame.idx];
+    const oi = frame.indices[frame.idx];
+    frame.idx++;
+    const [b] = splitTok(t);
+    if (opens.includes(b)) depth++;
+    else if (t === "end")  depth--;
+    blockTokens.push(t);
+    blockIndices.push(oi);
+  }
+  return { tokens: blockTokens, indices: blockIndices };
+}
+
+
+/******************** INTERPRETER *********************/
+function runWithOutput(src, debug = false, opts = {}) {
+	const dryRun = opts && opts.dryRun === true;
+	const addToHistory = (opts && typeof opts.addToHistory !== 'undefined') ? !!opts.addToHistory : true;
+	const tokens = src.trim().split(/\s+/);
+	// refresh LABELS: default everything to –1 (skip during dry runs)
+	if (!dryRun) {
+		for (const k in LABELS) LABELS[k] = -1;
+		tokens.forEach((t, i) => {
+		  const [, lab] = splitTok(t);
+		  if (lab) LABELS[lab] = i;          // absolute offset in original token list
+		});
+		EXECUTION_TRACE = [];
+	}
+    let thisStep = 0;
+	const functions = {};
+	const { tokens: main, indices: mainIdx } = parseDefs(tokens, functions);
+	let nextThreadId = 0; // stable, monotonic thread IDs per run
+	const threads = [{
+		id: nextThreadId++,
+		pc: 0,
+    tokens: main,
+    indices: mainIdx,
+    stack: [],
+    callStack: [],
+		blockStack: [],
+		fn: ""
+	}];
+
+	// Seed initial input stack: always 4 random clamped numbers unless provided via opts.inputSeed
+	const providedSeed = Array.isArray(opts.inputSeed) ? opts.inputSeed.slice(0, 4) : null;
+	const usedInput = providedSeed && providedSeed.length === 4
+		? providedSeed.map(v => CLAMP(v))
+		: [0,0,0,0].map(() => CLAMP(Math.floor(Math.random() * 128)));
+	threads[0].stack.push(...usedInput);
+	const out = [];
+	const outHTML = [],
+		vals = [],
+		cols = [],
+		tips = [];
+
+	function parseDefs(tok, table) {
+    const body = [];
+    const bodyIdx = [];
+    let currentName = null;
+    let currentLabel = null;
+    let currentBody = [];
+    let currentIdxs = [];
+    let controlDepth = 0; // depth of nested control blocks inside a function
+
+    for (let i = 0; i < tok.length; i++) {
+        const tk = tok[i];
+        if (!tk) continue;
+
+        // New function declaration starts: implicit END of previous function (if any)
+        if (tk.startsWith(">")) {
+            const raw = tk.slice(1);
+            const [name, lab] = splitTok(raw);
+            if (currentName !== null) {
+                table[currentName] = { body: currentBody, label: currentLabel, indices: currentIdxs };
+            }
+            currentName = name;
+            currentLabel = lab;
+            currentBody = [];
+            currentIdxs = [];
+            controlDepth = 0;
+            continue;
+        }
+
+        const [base] = splitTok(tk);
+
+        if (currentName !== null) {
+            // We are inside a function body
+            if (base === "loop" || base === "ifg" || base === "ifl") {
+                currentBody.push(tk);
+                currentIdxs.push(i);
+                controlDepth += 1;
+                continue;
+            }
+            if (tk === "end") {
+                if (controlDepth > 0) {
+                    // close an inner control block, not the function
+                    currentBody.push(tk);
+                    currentIdxs.push(i);
+                    controlDepth -= 1;
+                } else {
+                    // close the function body
+                    table[currentName] = { body: currentBody, label: currentLabel, indices: currentIdxs };
+                    currentName = null;
+                    currentLabel = null;
+                    currentBody = [];
+                    currentIdxs = [];
+                    controlDepth = 0;
+                }
+                continue;
+            }
+            // any other token is part of the current function body
+            currentBody.push(tk);
+            currentIdxs.push(i);
+        } else {
+            // Not inside a function: token belongs to main body
+            body.push(tk);
+            bodyIdx.push(i);
+        }
+    }
+
+    // If file ends while inside a function, implicitly close it
+    if (currentName !== null) {
+        table[currentName] = { body: currentBody, label: currentLabel, indices: currentIdxs };
+    }
+
+    return { tokens: body, indices: bodyIdx };
+}
+
+	let inst = 0;
+	while (threads.length && inst < MAX_INST) {
+		for (let tid = 0; tid < threads.length && inst < MAX_INST; tid++) {
+			const th = threads[tid],
+				S = th.stack,
+				pop = () => S.pop() ?? 0;
+			let tok;
+        let origIndex = -1;
+			// fetch token
+			while (true) {
+				if (th.blockStack.length) {
+					const blk = th.blockStack[th.blockStack.length - 1];
+					if (blk.idx < blk.tokens.length) {
+            origIndex = blk.indices[blk.idx];
+						tok = blk.tokens[blk.idx++];
+						break;
+					}
+					th.blockStack.pop();
+                    if(blk.type==="func") th.callStack.pop();
+		    if (blk.type === "loop" || blk.type === "once") th.callStack.pop();
+
+                    if (blk.type === "loop" && --blk.remaining > 0) {
+            			th.blockStack.push({
+							...blk,
+							idx: 0
+							});
+						th.callStack.push(blk.label || "LOOP"); 
+					} else continue;
+				} else {
+					if (th.pc >= th.tokens.length) {
+						threads.splice(tid, 1);
+						tid--;
+						tok = null;
+						break;
+					}
+            origIndex = th.indices[th.pc];
+					tok = th.tokens[th.pc++];
+					break;
+				}
+			}
+			if (tok == null) continue;
+			let [baseTok, labTok] = splitTok(tok);
+			tok = baseTok;
+
+			inst++;
+			if (debug) console.log(`[T${th.id}] ${tok} [${S.join(',')}]`);
+			// primitives
+			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "bit", "bval", "prune"].includes(tok)) {
+				if (tok === "dup") S.push(S.at(-1) ?? 0);
+				else if (tok === "swap") {
+					let b = pop(),
+						a = pop();
+					S.push(b, a);
+				} else if (tok === "drop") pop();
+				else if (tok === "bit") bitCounter++;
+				else if (tok === "bval") { S.push(bitCounter); bitCounter = 0; }
+				else if (tok === "prune") {
+					const v = pop();
+            if (v < 64) {
+              if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+							 // terminate thread
+							 threads.splice(tid,1); tid--; continue; 
+					}
+				}
+				else if (tok === "out") {
+					let v;
+					if (bitCounter > 0) {
+						v = bitCounter;
+						bitCounter = 0;
+					} else {
+						v = pop();
+					}
+					out.push(v);
+					const cs = th.callStack==null ? '' : th.callStack.join("|");
+					const idx = Math.abs(hashCode(`${th.id}-${cs}`)) % palette.length;
+					outHTML.push(`<span style='color:${palette[idx]}' title='T${th.id}${cs?" @"+cs:""}'>${v}</span>`);
+					vals.push(v);
+					cols.push(palette[idx]);
+					tips.push(`T${th.id}${cs?" @"+cs:""}`);
+				} else {
+					let b = pop(),
+						a = pop(),
+						r = 0;
+					switch (tok) {
+						case "+":
+							r = a + b;
+							break;
+						case "-":
+							r = a - b;
+							break;
+						case "*":
+							r = a * b;
+							break;
+						case "/":
+							r = b ? Math.trunc(a / b) : 0;
+					}
+					S.push(CLAMP(r));
+				}
+          if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+				continue;
+			}
+			// control blocks helper
+			function collect(label, frame) {
+				const blkTokens = []; 
+				const blkIndices = [];
+				let d = 1;
+              const opens = ["loop", "ifg", "ifl"]; 
+				while (frame.idx < frame.tokens.length && d) {
+					const t = frame.tokens[frame.idx];
+            const oi = frame.indices[frame.idx];
+            frame.idx++;
+					const [b] = splitTok(t);
+					if (opens.includes(b)) d++;
+					else if (t === "end") d--;
+					if (d) { blkTokens.push(t); blkIndices.push(oi); }
+				}
+				return { tokens: blkTokens, indices: blkIndices };
+			}
+			// current frame ref
+			const frameRef = th.blockStack.length ? th.blockStack[th.blockStack.length - 1] : {
+				tokens: th.tokens,
+          indices: th.indices,
+				idx: th.pc
+			};
+
+			if (tok === "loop" || tok === "ifg" || tok === "ifl") {
+		                var startBeforeCollect = frameRef.idx - 1;
+				const blk = collect(tok, frameRef);
+				if (tok === "loop") {
+					const n = pop();
+					if (n > 0) {
+					   th.blockStack.push({
+						type: "loop",
+						tokens: blk.tokens,
+              indices: blk.indices,
+						idx: 0,
+						remaining: n
+			    	   }); 
+					   th.callStack.push(labTok || "LOOP"); 
+					}
+				} else {
+					const b = pop(),
+						a = pop();
+					const ok = (tok === "ifg" && b > a) || (tok === "ifl" && b < a);
+					if (ok) {
+						th.blockStack.push({
+						type: "once",
+						tokens: blk.tokens,
+              indices: blk.indices,
+						idx: 0
+				  			}); 
+						th.callStack.push(labTok || tok.toUpperCase()); 
+					}
+				}
+				 // Splice only once, at top level, so nested loops remain intact
+				                 if (frameRef.tokens === th.tokens) {
+			           const blkStart = startBeforeCollect;
+			           const blkEnd   = frameRef.idx;          // idx after collect
+			           frameRef.tokens.splice(blkStart, blkEnd - blkStart);
+                 frameRef.indices.splice(blkStart, blkEnd - blkStart);
+			           th.pc = blkStart;
+			         }
+          if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+				continue;
+			}
+
+			if (tok.startsWith("@")) {
+                const name = tok.slice(1);
+        // --- Novelty Anchors and calls ---
+        if (name === "last") {
+          const historyIndexRaw = pop();
+          const innerIndexRaw = pop();
+          let val = 0;
+          const hLen = outputHistory.length;
+          if (hLen > 0) {
+            const which = Math.abs(historyIndexRaw) % hLen;
+            const selected = outputHistory.at(-1 - which) || [];
+            if (selected.length > 0) {
+              val = selected[Math.abs(innerIndexRaw) % selected.length] ?? 0;
+            }
+          }
+          S.push(CLAMP(val));
+        } else if (name === "time") {
+          S.push(CLAMP(new Date().getSeconds()) % 10);
+        } else if (name === "random") {
+          S.push(CLAMP(Math.floor(Math.random() * 128)));
+        } else if (functions[name]) {
+          const fn = functions[name];
+          const p1 = pop(), p2 = pop(), p3 = pop();
+          S.push(p3, p2, p1);
+          th.blockStack.push({ type: "func", tokens: [...fn.body], indices: [...fn.indices], idx: 0 });
+          if (th.callStack == null) th.callStack = [];
+          th.callStack.push(fn.label || name);
+        }
+        if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+        continue;
+      }
+
+			if (tok.startsWith("branch") && tok.length === 7) {
+				const N = +tok[6];
+       			if (N >= 2 && N <= 5) {
+       				const seeds = [];
+                      const seedStartIndex = frameRef.idx;
+                      
+                  for (let i = 0; i < N; i++) {
+                    seeds.push( collectSeed(frameRef) );     // collectSeed returns { tokens, indices }
+                  }
+const start = seedStartIndex;                // idx value you saved *before* the for-loop
+const end   = frameRef.idx;                  // idx after collecting all N seeds
+frameRef.tokens.splice(start, end - start);  // remove original seed tokens
+frameRef.indices.splice(start, end - start);
+frameRef.idx = start;
+
+    // If operating on main stream (no active block), move pc to start so we execute inserted seed(s)
+    if (frameRef.tokens === th.tokens) {
+      th.pc = start;
+    }
+
+    // Apply first seed to the current thread so it retains its existing thread id
+    if (seeds.length > 0) {
+      const s0 = seeds[0];
+      const top0 = th.blockStack.length ? th.blockStack[th.blockStack.length - 1]
+                                        : { tokens: th.tokens, indices: th.indices, idx: start };
+      top0.tokens.splice(top0.idx, 0, ...s0.tokens);
+      top0.indices.splice(top0.idx, 0, ...s0.indices);
+    }
+
+    // Spawn remaining seeds as new threads with unique ids
+    for (let i = 1; i < seeds.length; i++) {
+      const seed = seeds[i];
+      // deep-clone the *whole* thread state
+      const clone = JSON.parse(JSON.stringify(th));
+      const top   = clone.blockStack.length ? clone.blockStack[clone.blockStack.length - 1]
+                                            : { tokens: clone.tokens, indices: clone.indices, idx: start };
+      top.tokens.splice(top.idx, 0, ...seed.tokens);
+      top.indices.splice(top.idx, 0, ...seed.indices);
+      clone.pc = start;
+      clone.id = nextThreadId++;
+      threads.push(clone);
+    }
+                }
+          if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+			continue;
+		}
+
+			// Handle map2, map3, map4, map5 instructions
+			if (tok.startsWith("map") && tok.length === 4) {
+				const N = +tok[3];
+				if (N >= 2 && N <= 5) {
+					// Pop N values from the stack
+					const values = [];
+					for (let i = 0; i < N; i++) {
+						values.unshift(pop()); // unshift to maintain stack order
+					}
+					
+					// Save the current stack state after popping values
+					const baseStack = [...S];
+					
+					// Collect the next instruction/block
+					const seedStartIndex = frameRef.idx;
+					const seed = collectSeed(frameRef);
+					
+					// Remove the collected seed from the current frame
+					const start = seedStartIndex;
+					const end = frameRef.idx;
+					frameRef.tokens.splice(start, end - start);
+					frameRef.indices.splice(start, end - start);
+					frameRef.idx = start;
+					
+					// If operating on main stream, adjust pc
+					if (frameRef.tokens === th.tokens) {
+						th.pc = start;
+					}
+					
+					// For each value, create a thread with the base stack plus the value
+					for (let i = 0; i < values.length; i++) {
+						const value = values[i];
+						
+						if (i === 0) {
+							// Use current thread for first value
+							S.push(value); // Push the value onto stack
+							
+							// Insert seed tokens into current position
+							const top = th.blockStack.length ? th.blockStack[th.blockStack.length - 1]
+							                                  : { tokens: th.tokens, indices: th.indices, idx: start };
+							top.tokens.splice(top.idx, 0, ...seed.tokens);
+							top.indices.splice(top.idx, 0, ...seed.indices);
+						} else {
+							// Clone thread with base stack state for remaining values
+							const clone = JSON.parse(JSON.stringify(th));
+							// Reset clone's stack to base state and add the value
+							clone.stack = [...baseStack, value];
+							
+							// Insert seed tokens
+							const top = clone.blockStack.length ? clone.blockStack[clone.blockStack.length - 1]
+							                                    : { tokens: clone.tokens, indices: clone.indices, idx: start };
+							top.tokens.splice(top.idx, 0, ...seed.tokens);
+							top.indices.splice(top.idx, 0, ...seed.indices);
+							
+							clone.pc = start;
+							clone.id = nextThreadId++;
+							threads.push(clone);
+						}
+					}
+				}
+				if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") });
+				continue;
+			}
+
+			const num = parseInt(tok, 10);
+			if (!isNaN(num)) { S.push(CLAMP(num)); if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") }); }
+			else { if (!dryRun) EXECUTION_TRACE.push({ tid: th.id, ip: origIndex, stack: S.join("|"), callStack: (th.callStack && th.callStack.length ? th.callStack.join("|") : "") }); }
+		}
+	}
+		// removed output DOM update
+	const { len, cc, lastCount } = getMetrics(tokens);
+    stepCount = inst;
+  if (!dryRun) updateMetricsView(len, cc, lastCount);
+	// Append this run's output and trace to rolling history (cap at 20, 0 = most recent)
+    if (!dryRun) {
+    // Ensure age array matches current program length
+    ensureAgeArraySized(len);
+    // Recompute costData on every non-dry run before drawing
+    recomputeCostDataForCode(src);
+    // Snapshot current heat map entry and unshift to top (only when adding to graph history)
+    if (addToHistory) {
+      graphHistory.unshift({ costs: [...costData], ages: [...ageData], program: src, input: (typeof usedInput !== 'undefined' ? usedInput.slice() : []) });
+      if (graphHistory.length > MAX_GRAPH_ROWS) graphHistory.pop();
+    }
+ 	outputHistory.push([...out]);
+    if (typeof inputHistory !== 'undefined') {
+      inputHistory.push((typeof usedInput !== 'undefined' ? usedInput.slice() : []));
+      if (inputHistory.length > 20) inputHistory.shift();
+    }
+    outputInertia.push(inertiaVal || 0);
+    outputColorHistory.push([]);
+    outputTitleHistory.push([]);
+    if (outputHistory.length > 20) outputHistory.shift();
+    if (outputInertia.length > 20) outputInertia.shift();
+     if (outputColorHistory.length > 20) outputColorHistory.shift();
+     if (outputTitleHistory.length > 20) outputTitleHistory.shift();
+     // new: store execution trace row for graph
+     traceHistory.push(EXECUTION_TRACE.map(e => ({ ...e })));
+     if (traceHistory.length > 20) traceHistory.shift();
+     drawGraph();
+     updateLabelsView();
+   }
+	return out.join(" ");
+}
+
+/******************** UI *********************/
+const savedPrograms = [];
+
+function runProgram(d = false, opts = {}) {
+	const code = document.getElementById("program").value.trim();
+	const addToHistory = (opts && opts.forceHistory) || programTouchedByUser;
+	const currentSeed = [0,0,0,0].map(() => CLAMP(Math.floor(Math.random() * 128)));
+	const runOutStr = runWithOutput(code, d, { addToHistory, inputSeed: currentSeed });
+	programTouchedByUser = false;
+	  try { if (window.Trace3D && typeof window.Trace3D.isAnimating === 'function' && window.Trace3D.isAnimating()) { /* let current animation finish */ } else if (window.Trace3D && typeof window.Trace3D.setup === 'function') { window.Trace3D.setup(EXECUTION_TRACE); } } catch (e) { /* no-op */ }
+
+	if (typeof survivalMode !== 'undefined' && survivalMode) {
+		const ta = document.getElementById("program");
+		const toks = (ta && ta.value.trim()) ? ta.value.trim().split(/\s+/) : [];
+		const len = toks.length;
+		const recent = (typeof inputHistory !== 'undefined' ? inputHistory : []).slice(-SURVIVAL_INPUTS_TO_TEST);
+		if (recent.length > 0) {
+			let sumCost = 0;
+			let sumMismatch = 0;
+			for (let i = 0; i < recent.length; i++) {
+				const seed = recent[i];
+				const outStr = runWithOutput(code, false, { dryRun: true, inputSeed: seed });
+				const stepsHere = stepCount;
+				sumCost += (len * stepsHere);
+				const target = (seed && seed.length >= 2 && seed[0] === seed[1]) ? 127 : 0;
+				let actual = 0;
+				if (outStr && typeof outStr === 'string' && outStr.trim()) {
+					const parts = outStr.trim().split(/\s+/);
+					const last = parts[parts.length - 1];
+					const num = parseInt(last, 10);
+					if (!isNaN(num)) actual = CLAMP(num);
+				}
+				const mismatch = Math.min(1, Math.abs(actual - target) / 127);
+				sumMismatch += mismatch;
+			}
+			const avgCost = sumCost / recent.length;
+			const avgMismatch = sumMismatch / recent.length;
+			const penalty = avgMismatch * (0.10 * avgCost);
+			const effective = avgCost + penalty;
+			const costEl = document.getElementById("cost");
+			if (costEl) costEl.textContent = Math.round(effective);
+			// Show survival penalty percentage (penalty is 10% * mismatch)
+			updateSurvivalPenaltyView(avgMismatch * 10);
+		} else {
+			updateSurvivalPenaltyView(0);
+		}
+	}
+}
+
+function saveProgram() {
+	const c = document.getElementById("program").value.trim();
+	const url = new URL(window.location.href);
+	url.search = ""; // remove existing query
+	url.hash = "";   // remove hash
+	url.searchParams.set("cost", c); // URLSearchParams handles encoding
+	const urlStr = url.toString();
+
+	function fallbackCopy() {
+		try {
+			const ta = document.createElement("textarea");
+			ta.value = urlStr;
+			document.body.appendChild(ta);
+			ta.select();
+			document.execCommand("copy");
+			document.body.removeChild(ta);
+			alert("Shareable link copied to clipboard.");
+		} catch (e) {
+			prompt("Copy this URL:", urlStr);
+		}
+	}
+
+	if (navigator.clipboard && navigator.clipboard.writeText) {
+		navigator.clipboard.writeText(urlStr)
+			.then(() => alert("Shareable link copied to clipboard."))
+			.catch(() => fallbackCopy());
+	} else {
+		fallbackCopy();
+	}
+}
+
+function clearSavedPrograms() {
+	mutCount = 0;
+	updateMutCount();
+	LABELS = { };
+	savedPrograms.length = 0;
+    document.getElementById("savedList").innerHTML = "";
+}
+function mutateProgram() {
+  const orig = document.getElementById("program").value.trim();
+  if (!orig) return;
+
+  const toks = orig.split(/\s+/);
+
+  const protected = new Set();
+  let depth = 0;
+  for (let i = 0; i < toks.length; i++) {
+	  if (toks[i] === "[") depth++;
+	  if (depth) protected.add(i); // mark anything inside
+	  if (toks[i] === "]") 
+	      depth--;
+  }
+  
+  // Build list of indices that are actually safe to mutate
+  const mutableIndices = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (!protected.has(i) ) {
+      mutableIndices.push(i);
+    }
+  }
+  if (mutableIndices.length === 0) {
+    alert("No mutable tokens available (all protected or special).");
+    return;
+  }
+
+  const origLen = toks.length;
+
+  // Baseline target cost (including survival penalty if enabled)
+  const prevStepCount0 = stepCount;
+  const prevTargetSteps0 = targetSteps;
+  const prevBitCounter0 = bitCounter;
+  runWithOutput(orig, false, { dryRun: true });
+  const origStep = stepCount;
+  const baselineSteps = (targetSteps && targetSteps > 0) ? targetSteps : origStep;
+  let targetEffectiveCost = origLen * baselineSteps;
+  if (typeof survivalMode !== 'undefined' && survivalMode && Array.isArray(inputHistory)) {
+    const recent0 = inputHistory.slice(-SURVIVAL_INPUTS_TO_TEST);
+    if (recent0.length > 0) {
+      let sumCost0 = 0;
+      let sumMismatch0 = 0;
+      for (let i = 0; i < recent0.length; i++) {
+        const seed = recent0[i];
+        const outStr = runWithOutput(orig, false, { dryRun: true, inputSeed: seed });
+        const stepsHere = stepCount;
+        sumCost0 += (origLen * stepsHere);
+        const target = (seed && seed.length >= 2 && seed[0] === seed[1]) ? 127 : 0;
+        let actual = 0;
+        if (outStr && typeof outStr === 'string' && outStr.trim()) {
+          const parts = outStr.trim().split(/\s+/);
+          const last = parts[parts.length - 1];
+          const num = parseInt(last, 10);
+          if (!isNaN(num)) actual = CLAMP(num);
+        }
+        const mismatch = Math.min(1, Math.abs(actual - target) / 127);
+        sumMismatch0 += mismatch;
+      }
+      const avgCost0 = sumCost0 / recent0.length;
+      const avgMismatch0 = sumMismatch0 / recent0.length;
+      const penalty0 = avgMismatch0 * (0.10 * avgCost0);
+      targetEffectiveCost = avgCost0 + penalty0;
+    }
+  }
+  stepCount = prevStepCount0; targetSteps = prevTargetSteps0; bitCounter = prevBitCounter0;
+
+  let bestDeviation = Infinity;
+  let bestCandidates = [];
+  let totalAttempts = 0;
+
+  // Try replacing each mutable instruction once; score deviation from target cost
+  for (let mi = 0; mi < mutableIndices.length; mi++) {
+    const idx = mutableIndices[mi];
+    const mut = [...toks];
+    const oldTok = mut[idx];
+    let newTok;
+    do { newTok = randToken(); } while (newTok === oldTok);
+    mut[idx] = newTok;
+
+    const candidateCode = mut.join(" ");
+    totalAttempts++;
+
+    const prevStepCount = stepCount;
+    const prevTargetSteps = targetSteps;
+    const prevBitCounter = bitCounter;
+
+    let effective = null;
+    if (typeof survivalMode !== 'undefined' && survivalMode && Array.isArray(inputHistory) && inputHistory.length > 0) {
+      const recent = inputHistory.slice(-SURVIVAL_INPUTS_TO_TEST);
+      if (recent.length > 0) {
+        let sumCost = 0;
+        let sumMismatch = 0;
+        const len = mut.length;
+        for (let i = 0; i < recent.length; i++) {
+          const seed = recent[i];
+          const outStr = runWithOutput(candidateCode, false, { dryRun: true, inputSeed: seed });
+          const stepsHere = stepCount;
+          sumCost += (len * stepsHere);
+          const target = (seed && seed.length >= 2 && seed[0] === seed[1]) ? 127 : 0;
+          let actual = 0;
+          if (outStr && typeof outStr === 'string' && outStr.trim()) {
+            const parts = outStr.trim().split(/\s+/);
+            const last = parts[parts.length - 1];
+            const num = parseInt(last, 10);
+            if (!isNaN(num)) actual = CLAMP(num);
+          }
+          const mismatch = Math.min(1, Math.abs(actual - target) / 127);
+          sumMismatch += mismatch;
+        }
+        const avgCost = sumCost / recent.length;
+        const avgMismatch = sumMismatch / recent.length;
+        const penalty = avgMismatch * (0.10 * avgCost);
+        effective = avgCost + penalty;
+      }
+    }
+    if (effective == null) {
+      runWithOutput(candidateCode, false, { dryRun: true });
+      const steps = stepCount;
+      const len = mut.length;
+      effective = len * steps;
+    }
+
+    // restore globals affected by dry runs
+    stepCount = prevStepCount; targetSteps = prevTargetSteps; bitCounter = prevBitCounter;
+
+    const deviation = Math.abs(effective - targetEffectiveCost);
+    if (deviation < bestDeviation - 1e-6) {
+      bestDeviation = deviation;
+      bestCandidates = [{ idx, token: newTok, code: candidateCode }];
+    } else if (Math.abs(deviation - bestDeviation) <= 1e-6) {
+      bestCandidates.push({ idx, token: newTok, code: candidateCode });
+    }
+  }
+
+  if (bestCandidates.length > 0) {
+    const chosen = bestCandidates[Math.floor(Math.random() * bestCandidates.length)];
+    updateAgeDataOnMutation(origLen, new Set([chosen.idx]));
+
+    // Record inertia as number of dry-run attempts in this exhaustive pass
+    inertiaVal = totalAttempts;
+    inertiaHist.push(inertiaVal);
+    if (inertiaHist.length > INERTIA_WINDOW) inertiaHist.shift();
+    updateInertia();
+
+    document.getElementById("program").value = chosen.code;
+    runProgram(false, { forceHistory: true });
+    return;
+  }
+}
+
+// --- Perturbation Index helpers ---
+function computeSingleInertiaAttemptForCode(codeStr, deadlineTimeMs) {
+  if (!codeStr) return null;
+  const toks = codeStr.trim().split(/\s+/);
+  const protectedSet = new Set();
+  let depth = 0;
+  for (let i = 0; i < toks.length; i++) {
+    if (toks[i] === "[") depth++;
+    if (depth) protectedSet.add(i);
+    if (toks[i] === "]") depth--;
+  }
+  const mutableIndices = [];
+  for (let i = 0; i < toks.length; i++) {
+    if (!protectedSet.has(i)) mutableIndices.push(i);
+  }
+  if (mutableIndices.length === 0) return null;
+
+  const origLen = toks.length;
+  const origOut = runWithOutput(codeStr, false, { dryRun: true });
+  const origStep = stepCount;
+  const maxStepDelta = Math.ceil(origStep * 0.05);
+  const maxAttemptsPerDelta = 500;
+
+  let deltaTokens = 1;
+  let totalAttempts = 0;
+  const hasDeadline = typeof deadlineTimeMs === 'number' && isFinite(deadlineTimeMs);
+
+  while (deltaTokens <= mutableIndices.length) {
+    for (let attempt = 0; attempt < maxAttemptsPerDelta; attempt++) {
+      if (hasDeadline && Date.now() >= deadlineTimeMs) return totalAttempts;
+      const mut = [...toks];
+      const indices = new Set();
+      const targetCount = Math.min(deltaTokens, mutableIndices.length);
+      while (indices.size < targetCount) {
+        const idx = mutableIndices[Math.floor(Math.random() * mutableIndices.length)];
+        indices.add(idx);
+      }
+      let involvesCommand = false;
+      for (const idx of indices) {
+        let newTok;
+        const oldTok = mut[idx];
+        do {
+          newTok = randToken();
+        } while (newTok === oldTok);
+        if (isCommandToken(oldTok) || isCommandToken(newTok)) involvesCommand = true;
+        mut[idx] = newTok;
+      }
+      if (!involvesCommand) {
+        const forceIdx = Array.from(indices)[Math.floor(Math.random() * indices.size)];
+        let forced;
+        do {
+          forced = randNonNumberToken();
+        } while (forced === toks[forceIdx]);
+        mut[forceIdx] = forced;
+        involvesCommand = true;
+      }
+
+      const newCode = mut.join(" ");
+      totalAttempts++;
+      if (hasDeadline && Date.now() >= deadlineTimeMs) return totalAttempts;
+      const newOut = runWithOutput(newCode, false, { dryRun: true });
+      const newStep = stepCount;
+
+      if (
+        Math.abs(newStep - (targetSteps==0 ? origStep : targetSteps)) <= maxStepDelta &&
+        newOut !== origOut &&
+        mut.length === origLen
+      ) {
+        return totalAttempts;
+      }
+    }
+    deltaTokens++;
+  }
+  return totalAttempts;
+}
+
+function averageInertiaForCode(codeStr, trials, deadlineTimeMs) {
+  let sum = 0;
+  let count = 0;
+  const hasDeadline = typeof deadlineTimeMs === 'number' && isFinite(deadlineTimeMs);
+  for (let i = 0; i < trials; i++) {
+    if (hasDeadline && Date.now() >= deadlineTimeMs) break;
+    const val = computeSingleInertiaAttemptForCode(codeStr, deadlineTimeMs);
+    if (val == null) return null;
+    sum += val;
+    count++;
+  }
+  const minNeeded = Math.min(PI_MIN_TRIALS, trials);
+  if (count < minNeeded) return null;
+  return sum / count;
+}
+
+function computePerturbationIndex() {
+  const ta = document.getElementById('program');
+  const originalText = ta.value;
+  const selStart = ta.selectionStart;
+  const selEnd = ta.selectionEnd;
+  if (selStart == null || selEnd == null || selStart === selEnd) {
+    alert('Select part of the program text first.');
+    return;
+  }
+
+  // Preserve globals touched by dry runs and UI state
+  const prevStepCount = stepCount;
+  const prevTargetSteps = targetSteps;
+  const prevBitCounter = bitCounter;
+
+  // Build token list and character spans for selection mapping
+  const tokens = [];
+  const spans = [];
+  const re = /\S+/g;
+  let m;
+  while ((m = re.exec(originalText)) !== null) {
+    tokens.push(m[0]);
+    spans.push({ start: m.index, end: m.index + m[0].length });
+  }
+
+  // Identify which token indices overlap the selection
+  const selectedTokenIndices = [];
+  for (let i = 0; i < spans.length; i++) {
+    const s = spans[i].start;
+    const e = spans[i].end;
+    if (s < selEnd && e > selStart) selectedTokenIndices.push(i);
+  }
+  if (selectedTokenIndices.length === 0) {
+    alert('No whole tokens found in the selection.');
+    return;
+  }
+
+  // Original cost (length * steps)
+  runWithOutput(originalText, false, { dryRun: true });
+  const originalLen = tokens.length;
+  const originalSteps = stepCount;
+  const originalCost = originalLen * originalSteps;
+
+  // Perform N mutations restricted to the selected tokens and average the total cost
+  let sumCost = 0;
+  for (let i = 0; i < PERTURBATION_RUNS; i++) {
+    const mutated = tokens.slice();
+    const idx = selectedTokenIndices[Math.floor(Math.random() * selectedTokenIndices.length)];
+    const oldTok = mutated[idx];
+    let newTok;
+    do {
+      newTok = randToken();
+    } while (newTok === oldTok);
+    mutated[idx] = newTok;
+
+    const mutatedText = mutated.join(' ');
+    runWithOutput(mutatedText, false, { dryRun: true });
+    const steps = stepCount;
+    const len = mutated.length;
+    sumCost += len * steps;
+  }
+
+  const avgCost = sumCost / PERTURBATION_RUNS;
+  const percent = (originalCost > 0 ? (avgCost / originalCost) * 100 : 0) - 100;
+  const delta = avgCost - originalCost;
+
+  // Restore globals possibly touched by dry runs
+  stepCount = prevStepCount;
+  targetSteps = prevTargetSteps;
+  bitCounter = prevBitCounter;
+
+  // Restore original text and selection (text was never changed, but selection UX matters)
+  ta.value = originalText;
+  try { ta.setSelectionRange(selStart, selEnd); } catch (e) {}
+
+  alert(`${percent.toFixed(2)}% (${Math.abs(delta).toFixed(2)})`);
+}
+
+function computeSelectedCost() {
+  const ta = document.getElementById('program');
+  const originalText = ta.value;
+  const selStart = ta.selectionStart;
+  const selEnd = ta.selectionEnd;
+  if (selStart == null || selEnd == null || selStart === selEnd) {
+    alert('Select part of the program text first.');
+    return;
+  }
+
+  const prevStepCount = stepCount;
+  const prevTargetSteps = targetSteps;
+  const prevBitCounter = bitCounter;
+
+  const countTokens = (text) => {
+    const trimmed = text.trim();
+    if (!trimmed) return 0;
+    return trimmed.split(/\s+/).length;
+  };
+
+  const replaceTokensWithNopInRange = (text, start, end) => {
+    const re = /\S+/g;
+    let out = '';
+    let last = 0;
+    let replaced = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const s = m.index;
+      const e = s + m[0].length;
+      const overlaps = s < end && e > start;
+      if (overlaps) {
+        out += text.slice(last, s) + 'nop';
+        last = e;
+        replaced++;
+      }
+    }
+    out += text.slice(last);
+    return { text: out, replacedCount: replaced };
+  };
+
+  // Total cost (original)
+  runWithOutput(originalText, false, { dryRun: true });
+  const totalSteps = stepCount;
+  const totalLen = countTokens(originalText);
+  const totalCost = totalLen * totalSteps;
+
+  // NOP-replaced selection cost
+  const { text: noppedText, replacedCount } = replaceTokensWithNopInRange(originalText, selStart, selEnd);
+  if (replacedCount === 0) {
+    stepCount = prevStepCount; targetSteps = prevTargetSteps; bitCounter = prevBitCounter;
+    alert('No whole tokens found in the selection.');
+    return;
+  }
+  runWithOutput(noppedText, false, { dryRun: true });
+  const noppedSteps = stepCount;
+  const noppedLen = countTokens(noppedText);
+  const noppedCost = noppedLen * noppedSteps;
+
+  // Restore globals possibly touched by dry runs
+  stepCount = prevStepCount;
+  targetSteps = prevTargetSteps;
+  bitCounter = prevBitCounter;
+
+  if (totalCost <= 0) {
+    alert('0.00%');
+    return;
+  }
+  const selectionCost = totalCost - noppedCost;
+  const percent = (selectionCost / totalCost) * 100;
+  alert(percent.toFixed(2) + '%');
+}
+
+// Compute costData per-instruction via dry runs
+function recomputeCostDataForCode(codeStr) {
+  const toks = (codeStr || '').trim() ? codeStr.trim().split(/\s+/) : [];
+  const len = toks.length;
+  costData = new Array(len).fill(0);
+  if (len === 0) return;
+
+  const prevStepCount = stepCount;
+  const prevTargetSteps = targetSteps;
+  const prevBitCounter = bitCounter;
+
+  runWithOutput(codeStr, false, { dryRun: true });
+  const originalSteps = stepCount;
+  const originalCost = len * originalSteps;
+
+  for (let i = 0; i < len; i++) {
+    const mutated = toks.slice();
+    mutated[i] = 'nop';
+    const mutatedText = mutated.join(' ');
+    runWithOutput(mutatedText, false, { dryRun: true });
+    const noppedSteps = stepCount;
+    const noppedCost = len * noppedSteps;
+    const percent = originalCost > 0 ? ((originalCost - noppedCost) / originalCost) * 100 : 0;
+    costData[i] = Math.abs(percent);
+  }
+
+  stepCount = prevStepCount;
+  targetSteps = prevTargetSteps;
+  bitCounter = prevBitCounter;
+}
+
+
+window.onload = () => {
+	const sp = new URLSearchParams(location.search);
+	const raw = sp.get("cost") || sp.get("code");
+	if (raw) {
+		document.getElementById("program").value = raw;
+		setTimeout(runProgram, 0);
+	}
+	updateMutCount();   // initialise counter to 0 on first load
+  const progEl = document.getElementById("program");
+  if (progEl) progEl.addEventListener('input', () => { programTouchedByUser = true; resetAgeDataForProgram(); });
+  const chk = document.getElementById('survivalModeChk');
+  if (chk) {
+    const saved = (function(){ try { return localStorage.getItem('survivalMode') === '1'; } catch(e){ return false; } })();
+    chk.checked = !!saved;
+    if (typeof survivalMode !== 'undefined') survivalMode = !!saved;
+    chk.addEventListener('change', () => {
+      if (typeof survivalMode !== 'undefined') survivalMode = !!chk.checked;
+      try { localStorage.setItem('survivalMode', chk.checked ? '1' : '0'); } catch (e) {}
+      // Reset survival penalty display on toggle
+      updateSurvivalPenaltyView(0);
+    });
+  }
+	// show Instruction label when hovering over the heatmap and update based on X
+	const graph = document.getElementById("graph");
+	if (graph) {
+		graph.addEventListener("mouseenter", () => {
+			const el = document.getElementById("hoverInstructionLabel");
+			if (el) el.style.display = "inline";
+		});
+		graph.addEventListener("mouseleave", () => {
+			const el = document.getElementById("hoverInstructionLabel");
+			if (el) el.style.display = "none";
+			const t = document.getElementById("instructionText");
+			if (t) t.textContent = "";
+		});
+		graph.addEventListener("mousemove", (e) => {
+			const ta = document.getElementById("program");
+			const labelEl = document.getElementById("hoverInstructionLabel");
+			if (!ta || !labelEl) return;
+			const tokens = ta.value.trim() ? ta.value.trim().split(/\s+/) : [];
+			if (tokens.length === 0) {
+				labelEl.style.display = "none";
+				return;
+			}
+			const rect = graph.getBoundingClientRect();
+			const W = rect.width || graph.clientWidth || 1;
+			let x = e.clientX - rect.left;
+			if (x < 0) x = 0;
+			if (x > W) x = W;
+			const idx = Math.min(tokens.length - 1, Math.max(0, Math.floor(x / (W / tokens.length))));
+			const t = document.getElementById("instructionText");
+			if (t) t.textContent = tokens[idx] || "";
+			labelEl.style.display = "inline";
+		});
+		graph.addEventListener("click", (e) => {
+			const rect = graph.getBoundingClientRect();
+			const y = e.clientY - rect.top;
+			const r = Math.floor(y / GRAPH_ROW_HEIGHT);
+			const rows = Math.min(graphHistory.length, MAX_GRAPH_ROWS);
+			if (r < 0 || r >= rows) return;
+			const entry = graphHistory[r];
+			if (!entry || !entry.program) return;
+			const ta = document.getElementById("program");
+			if (ta) ta.value = entry.program;
+			programTouchedByUser = false;
+		});
+	}
+};
+</script> 
+<!-- include three.js and the trace3d widget -->
+<script src="https://unpkg.com/three@0.158.0/build/three.min.js"></script>
+<script src="./trace3d.js"></script>
+</body> 
+</html>
