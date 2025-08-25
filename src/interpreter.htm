@@ -872,7 +872,7 @@ frameRef.idx = start;
 					// Prepare map context and begin first iteration inline
 					if (!th.mapCtxStack) th.mapCtxStack = [];
 					const mapId = nextMapId++;
-					const mapCtx = { id: mapId, values, seed, start, baseStack, baseLen, outputs: [], iterIndex: 0, instrIp: origIndex };
+					const mapCtx = { id: mapId, values, seed, start, baseStack, baseLen, outputs: [], iterIndex: 0, instrIp: origIndex, baseConsumeCount: 0 };
 					th.mapCtxStack.push(mapCtx);
 					// Reset stack to base and push first value
 					S.length = 0; S.push(...baseStack, values[0]);
@@ -918,6 +918,13 @@ frameRef.idx = start;
 							produced = S.slice(j + 1);
 						}
 					}
+					// Track how many base items were consumed by the seed (count suffix removed from base)
+					let commonPrefix = 0;
+					for (; commonPrefix < Math.min(ctx.baseLen, S.length); commonPrefix++) {
+						if (S[commonPrefix] !== ctx.baseStack[commonPrefix]) break;
+					}
+					const consumedThisIter = Math.max(0, ctx.baseLen - commonPrefix);
+					if (consumedThisIter > ctx.baseConsumeCount) ctx.baseConsumeCount = consumedThisIter;
 					// Fallback: if nothing new was appended but some base element changed, capture the top-most changed base element.
 					if (!produced.length) {
 						for (let i = Math.min(ctx.baseLen, S.length) - 1; i >= 0; i--) {
@@ -940,14 +947,12 @@ frameRef.idx = start;
 							th.indices.splice(th.pc, 0, ...ctx.seed.indices, ctx.instrIp);
 						}
 					} else {
-						// All iterations complete: if we captured results, replace the main stack with them;
-						// otherwise, restore the original base stack.
+						// All iterations complete: restore base (minus any consumed suffix), then append results
+						const consume = Math.min(ctx.baseConsumeCount || 0, ctx.baseStack.length);
+						const finalBase = ctx.baseStack.slice(0, ctx.baseStack.length - consume);
 						S.length = 0;
-						if (ctx.outputs.length) {
-							S.push(...ctx.outputs);
-						} else {
-							S.push(...ctx.baseStack);
-						}
+						S.push(...finalBase);
+						if (ctx.outputs.length) S.push(...ctx.outputs);
 						stackArr.splice(ctxIdx, 1);
 					}
 				}
