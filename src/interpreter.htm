@@ -651,7 +651,7 @@ function runWithOutput(src, debug = false, opts = {}) {
 			inst++;
 			if (debug) console.log(`[T${th.id}] ${tok} [${S.join(',')}]`);
 			// primitives
-			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "bit", "bval", "prune"].includes(tok) || (tok.startsWith("dup") && tok.length === 4) || (tok.startsWith("swap") && tok.length === 5)) {
+			if (["+", "-", "*", "/", "dup", "swap", "drop", "out", "debug", "bit", "bval", "prune"].includes(tok) || (tok.startsWith("dup") && tok.length === 4) || (tok.startsWith("swap") && tok.length === 5)) {
 				if (tok === "dup") {
 					const v = pop();
 					S.push(v, v);
@@ -702,6 +702,11 @@ function runWithOutput(src, debug = false, opts = {}) {
 					vals.push(v);
 					cols.push(palette[idx]);
 					tips.push(`T${th.id}${cs?" @"+cs:""}`);
+				}
+				else if (tok === "debug") {
+					if (!dryRun) {
+						try { alert(S.join(' ')); } catch (e) { /* no-op */ }
+					}
 				} else {
 					let b = pop(),
 						a = pop(),
