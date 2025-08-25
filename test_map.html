@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Map Instruction Test</title>
+</head>
+<body>
+    <h1>Map Instruction Test</h1>
+    <pre id="output"></pre>
+    
+    <script>
+        // Minimal interpreter implementation to test map logic
+        const CLAMP = v => ((v % 128) + 128) % 128;
+        
+        function runTest(code) {
+            const tokens = code.trim().split(/\s+/);
+            const stack = [];
+            const output = [];
+            let pc = 0;
+            
+            const pop = () => stack.pop() ?? 0;
+            const push = (v) => stack.push(CLAMP(v));
+            
+            function executeTokens(tokens, stack, startPc = 0) {
+                let localPc = startPc;
+                
+                while (localPc < tokens.length) {
+                    const tok = tokens[localPc++];
+                    
+                    if (tok === '+') {
+                        const b = pop(), a = pop();
+                        push(a + b);
+                    } else if (tok === 'out') {
+                        output.push(pop());
+                    } else if (tok.startsWith('map') && tok.length === 4) {
+                        const N = +tok[3];
+                        const values = [];
+                        for (let i = 0; i < N; i++) {
+                            values.unshift(pop());
+                        }
+                        
+                        // Get next instruction
+                        const nextInstr = tokens[localPc++];
+                        
+                        // Execute the instruction for each value
+                        for (const value of values) {
+                            const clonedStack = [...stack];
+                            clonedStack.push(value);
+                            
+                            // Execute the next instruction with cloned stack
+                            if (nextInstr === '+') {
+                                const b = clonedStack.pop() ?? 0;
+                                const a = clonedStack.pop() ?? 0;
+                                stack.push(CLAMP(a + b));
+                            } else if (nextInstr === 'out') {
+                                output.push(clonedStack.pop() ?? 0);
+                            }
+                        }
+                    } else {
+                        // Number
+                        const num = parseInt(tok, 10);
+                        if (!isNaN(num)) {
+                            push(num);
+                        }
+                    }
+                }
+                
+                return { stack, output };
+            }
+            
+            // Initialize stack
+            stack.push(10);
+            
+            const result = executeTokens(tokens, stack);
+            return result.output;
+        }
+        
+        // Test the example: 10 5 2 map2 + out out
+        const testCode = "5 2 map2 + out out";
+        const result = runTest(testCode);
+        
+        document.getElementById('output').textContent = 
+            `Test: 10 ${testCode}\n` +
+            `Expected output: 15, 12\n` +
+            `Actual output: ${result.join(', ')}\n` +
+            `Test ${result[0] === 15 && result[1] === 12 ? 'PASSED' : 'FAILED'}`;
+    </script>
+</body>
+</html>

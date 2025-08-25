@@ -1,0 +1,32 @@
+Test cases for map instructions:
+
+1. Basic map2 example (from the requirement):
+   Input: 10 5 2 map2 + out out
+   Expected output: 15 12
+   
+   Explanation:
+   - Stack starts with [10]
+   - Push 5 and 2: [10, 5, 2]
+   - map2 pops 2 values (5, 2) leaving [10]
+   - For value 5: clone stack [10], push 5 → [10, 5], execute +, result 15
+   - For value 2: clone stack [10], push 2 → [10, 2], execute +, result 12
+   - Both results pushed to main stack
+   - out out prints: 15 12
+
+2. map3 with function call:
+   Input: >func1 + end 10 5 3 1 map3 @func1 out out out
+   Expected output: 15 13 11
+   
+3. map4 example:
+   Input: 100 4 3 2 1 map4 - out out out out
+   Expected output: 96 97 98 99
+   
+4. map with control structure:
+   Input: 10 20 2 map2 ifg 100 out end out out
+   Expected: 100 (nothing) - first thread executes ifg with 20>10, second with 10>10 (false)
+
+To test in the interpreter:
+1. Open interpreter.htm in a browser
+2. Enter the test code in the textarea
+3. Click "Run"
+4. Check the output matches expected results
