@@ -420,6 +420,17 @@ function drawGraph() {
 
 	let g = "";
 
+	function valueToColor(val) {
+		const v = Math.max(0, Math.min(127, typeof val === 'number' ? val : 0));
+		return costToColor((v / 127) * 100);
+	}
+
+	function penaltyToColor(p) {
+		if (p === 0) return "#0f0"; // exact zero is green
+		const percent = Math.max(0, Math.min(100, (p || 0) * 100));
+		return costToColor(percent);
+	}
+
 	if (graphHistory.length === 0) {
 		// Fallback: draw current single row
 		// Ensure per-instruction arrays match current program length
@@ -443,13 +454,32 @@ function drawGraph() {
 		const entry = graphHistory[r];
 		const len = entry && Array.isArray(entry.costs) ? entry.costs.length : 0;
 		if (len === 0) continue;
-		const step = W / len;
+		const inputCount = (entry && Array.isArray(entry.input)) ? Math.min(4, entry.input.length) : 0;
+		const hasPenalty = entry && typeof entry.penalty === 'number' && isFinite(entry.penalty);
+		const totalCells = len + inputCount + (hasPenalty ? 1 : 0);
+		const step = W / (totalCells || 1);
 		const y = r * GRAPH_ROW_HEIGHT;
+
+		// Left: input seed squares (up to 4)
+		if (inputCount > 0) {
+			for (let i = 0; i < inputCount; i++) {
+				const x = i * step;
+				const col = valueToColor(entry.input[i]);
+				g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${GRAPH_ROW_HEIGHT}' fill='${col}' fill-opacity='1' title='in${i}:${entry.input[i]}'></rect>`;
+			}
+		}
 		for (let i = 0; i < len; i++) {
-			const x = i * step;
+			const x = (i + inputCount) * step;
 			const col = costToColor(entry.costs[i] || 0);
 			const a = ageToOpacity(entry.ages[i] || 0);
 			g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${GRAPH_ROW_HEIGHT}' fill='${col}' fill-opacity='${a}'></rect>`;
+		}
+
+		// Right: survival penalty block
+		if (hasPenalty) {
+			const x = (inputCount + len) * step;
+			const col = penaltyToColor(entry.penalty);
+			g += `<rect x='${x}' y='${y}' width='${Math.max(1, step - 1)}' height='${GRAPH_ROW_HEIGHT}' fill='${col}' fill-opacity='1' title='penalty:${(entry.penalty*100).toFixed(1)}%'></rect>`;
 		}
 	}
 
@@ -1001,7 +1031,7 @@ frameRef.idx = start;
     recomputeCostDataForCode(src);
     // Snapshot current heat map entry and unshift to top (only when adding to graph history)
     if (addToHistory) {
-      graphHistory.unshift({ costs: [...costData], ages: [...ageData], program: src, input: (typeof usedInput !== 'undefined' ? usedInput.slice() : []) });
+      graphHistory.unshift({ costs: [...costData], ages: [...ageData], program: src, input: (typeof usedInput !== 'undefined' ? usedInput.slice() : []), penalty: null });
       if (graphHistory.length > MAX_GRAPH_ROWS) graphHistory.pop();
     }
  	outputHistory.push([...out]);
@@ -1068,6 +1098,11 @@ function runProgram(d = false, opts = {}) {
 			if (costEl) costEl.textContent = Math.round(effective);
 			// Show survival penalty percentage (penalty is 10% * mismatch)
 			updateSurvivalPenaltyView(avgMismatch * 10);
+			// Attach normalized penalty (0..1) to newest graph row for rendering when we just added a row
+			if (addToHistory && Array.isArray(graphHistory) && graphHistory.length > 0) {
+				graphHistory[0].penalty = avgMismatch;
+				drawGraph();
+			}
 		} else {
 			updateSurvivalPenaltyView(0);
 		}
@@ -1585,7 +1620,27 @@ window.onload = () => {
 			let x = e.clientX - rect.left;
 			if (x < 0) x = 0;
 			if (x > W) x = W;
-			const idx = Math.min(tokens.length - 1, Math.max(0, Math.floor(x / (W / tokens.length))));
+			const y = e.clientY - rect.top;
+			const r = Math.floor(y / GRAPH_ROW_HEIGHT);
+			const rows = Math.min(graphHistory.length, MAX_GRAPH_ROWS);
+			if (r < 0 || r >= rows) {
+				labelEl.style.display = "none";
+				return;
+			}
+			const entry = graphHistory[r];
+			const len = entry && Array.isArray(entry.costs) ? entry.costs.length : tokens.length;
+			const inputCount = (entry && Array.isArray(entry.input)) ? Math.min(4, entry.input.length) : 0;
+			const hasPenalty = entry && typeof entry.penalty === 'number' && isFinite(entry.penalty);
+			const totalCells = len + inputCount + (hasPenalty ? 1 : 0);
+			const step = W / (totalCells || 1);
+			const xCell = Math.max(0, Math.min(totalCells - 1, Math.floor(x / step)));
+			if (xCell < inputCount || (hasPenalty && xCell >= inputCount + len)) {
+				labelEl.style.display = "none";
+				const t = document.getElementById("instructionText");
+				if (t) t.textContent = "";
+				return;
+			}
+			const idx = Math.min(len - 1, Math.max(0, xCell - inputCount));
 			const t = document.getElementById("instructionText");
 			if (t) t.textContent = tokens[idx] || "";
 			labelEl.style.display = "inline";
